@@ -1689,9 +1689,8 @@ static int fsinfo_id2target(unsigned int id, char *buf, size_t bufsz)
 	return 0;
 }
 
-
-static int fsinfo_buf2fs(struct libmnt_fs *fs, int request,
-			 char *buf, size_t bufsz, size_t len)
+static int fsinfo_buf2fs(struct libmnt_fs *fs,
+			 int request, char *buf, size_t len)
 {
 	int rc = 0;
 
@@ -1791,7 +1790,7 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 		if ((size_t) res >= sizeof(buf))
 			rc = -ENAMETOOLONG;
 		if (rc == 0)
-			rc = fsinfo_buf2fs(fs, requests[i], buf, sizeof(buf), res);
+			rc = fsinfo_buf2fs(fs, requests[i], buf, res);
 		if (rc)
 			break;	/* error */
 	}
