@@ -1785,7 +1785,7 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 		res = fsinfo(fd, NULL, &params, sizeof(params), buf, sizeof(buf));
 		if (res < 0)
 			rc = res;
-		if ((size_t) rc >= sizeof(buf))
+		if ((size_t) res >= sizeof(buf))
 			rc = -ENAMETOOLONG;
 		if (rc == 0)
 			rc = fsinfo_buf2fs(fs, requests[i], buf, sizeof(buf), res);
