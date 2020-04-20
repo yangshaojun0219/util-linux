@@ -1651,6 +1651,13 @@ int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf)
 	return 0;
 }
 
+#ifndef USE_LIBMOUNT_SUPPORT_FSINFO
+int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)))
+{
+	return -ENOSYS;
+}
+#else /* USE_LIBMOUNT_SUPPORT_FSINFO */
+
 static int fsinfo_buf2fs(struct libmnt_fs *fs,
 			 int request, char *buf, size_t len)
 {
@@ -1759,5 +1766,4 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 		fs->flags |= MNT_FS_KERNEL;
 	return rc;
 }
-
-
+#endif /* USE_LIBMOUNT_SUPPORT_FSINFO */

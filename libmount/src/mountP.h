@@ -24,7 +24,9 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#include <linux/fsinfo.h>	/* for struct fsinfo_params */
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+# include <linux/fsinfo.h>	/* for struct fsinfo_params */
+#endif
 
 #include "c.h"
 #include "list.h"
@@ -427,12 +429,14 @@ extern int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf);
 extern int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs);
 
 /* fsinfo.c */
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 extern int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags);
 extern int mnt_get_id_fsinfo(unsigned int id,
                         struct fsinfo_params *params,
                         size_t params_size,
                         char *buf,
                         size_t *bufsz);
+#endif
 
 /* context.c */
 extern struct libmnt_context *mnt_copy_context(struct libmnt_context *o);

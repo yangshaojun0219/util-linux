@@ -11,11 +11,11 @@
  */
 #include "mountP.h"
 
-#include <sys/syscall.h>
-#include <linux/mount.h>
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 
 /* libc fallback */
 #ifndef HAVE_FSINFO
+# include <sys/syscall.h>
 # ifndef __NR_fsinfo
 #  define __NR_fsinfo -1
 # endif
@@ -78,3 +78,5 @@ int mnt_get_id_fsinfo(	unsigned int id,
 		*bufsz = res;
 	return rc;
 }
+
+#endif /* USE_LIBMOUNT_SUPPORT_FSINFO */
