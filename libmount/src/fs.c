@@ -1747,7 +1747,8 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs, int request,
 
 int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 {
-	int fd, i, rc = 0;
+	unsigned int i;
+	int fd, rc = 0;
 	char buf[BUFSIZ];
 	int requests[] = {
 		FSINFO_ATTR_SOURCE,
