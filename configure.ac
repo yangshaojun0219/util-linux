@@ -479,6 +479,7 @@ AC_CHECK_FUNCS([ \
 	explicit_bzero \
 	fmemopen \
 	fsync \
+	fsinfo \
 	utimensat \
 	getdomainname \
 	getdtablesize \

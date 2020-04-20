@@ -11,6 +11,7 @@ libmount_la_SOURCES = \
 	libmount/src/mountP.h \
 	libmount/src/cache.c \
 	libmount/src/fs.c \
+	libmount/src/fsinfo.c \
 	libmount/src/init.c \
 	libmount/src/iter.c \
 	libmount/src/lock.c \

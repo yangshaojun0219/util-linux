@@ -19,8 +19,6 @@
 #include <ctype.h>
 #include <blkid.h>
 #include <stddef.h>
-#include <sys/syscall.h>
-#include <linux/fsinfo.h>
 #include <linux/mount.h>
 
 #include "mountP.h"
@@ -1653,39 +1651,6 @@ int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf)
 	return 0;
 }
 
-#ifndef __NR_fsinfo
-#define __NR_fsinfo -1
-#endif
-
-static ssize_t fsinfo(int dfd, const char *filename,
-	       struct fsinfo_params *params, size_t params_size,
-	       void *result_buffer, size_t result_buf_size)
-{
-	return syscall(__NR_fsinfo, dfd, filename,
-		       params, params_size,
-		       result_buffer, result_buf_size);
-}
-
-int mnt_fs_lookup_id(const char *path, unsigned int *id, unsigned int flags)
-{
-	struct fsinfo_mount_info info;
-	struct fsinfo_params params = {
-		.flags		= FSINFO_FLAGS_QUERY_PATH,
-		.request	= FSINFO_ATTR_MOUNT_INFO,
-		.at_flags	= flags,
-	};
-	int rc;
-
-	errno = 0;
-	rc = fsinfo(AT_FDCWD, path,
-		    &params, sizeof(params), &info, sizeof(info));
-	if (rc == -1)
-		rc = -errno;
-	else
-		*id = info.mnt_id;
-	return rc;
-}
-
 static int fsinfo_buf2fs(struct libmnt_fs *fs,
 			 int request, char *buf, size_t len)
 {
@@ -1765,33 +1730,27 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 	if (fs->target && !fs->id) {
 		unsigned int id;
 
-		rc = mnt_fs_lookup_id(fs->target, &id, AT_NO_AUTOMOUNT);
+		rc = mnt_get_target_id(fs->target, &id, AT_NO_AUTOMOUNT);
 		if (rc < 0)
 			return rc;
 		fs->id = id;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(requests); i++) {
-		char idstr[sizeof(stringify_value(UINT_MAX))];
 		struct fsinfo_params params = {
 			.request = requests[i],
 			.flags = FSINFO_FLAGS_QUERY_MOUNT
 		};
-		ssize_t res;
+		size_t sz = sizeof(buf);
 
 		/* fs->target already set? */
 		if (fs->target &&
 		    params.request == FSINFO_ATTR_MOUNT_POINT_FULL)
 			continue;
 
-		snprintf(idstr, sizeof(idstr), "%u", fs->id);
-		res = fsinfo(AT_FDCWD, idstr, &params, sizeof(params), buf, sizeof(buf));
-		if (res < 0)
-			rc = res;
-		if ((size_t) res >= sizeof(buf))
-			rc = -ENAMETOOLONG;
+		rc = mnt_get_id_fsinfo(fs->id, &params, sizeof(params), buf, &sz);
 		if (rc == 0)
-			rc = fsinfo_buf2fs(fs, requests[i], buf, res);
+			rc = fsinfo_buf2fs(fs, requests[i], buf, sz);
 		if (rc)
 			break;	/* error */
 	}

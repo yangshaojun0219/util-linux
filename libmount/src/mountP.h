@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include <linux/fsinfo.h>	/* for struct fsinfo_params */
+
 #include "c.h"
 #include "list.h"
 #include "debug.h"
@@ -422,8 +424,15 @@ extern int __mnt_fs_set_fstype_ptr(struct libmnt_fs *fs, char *fstype)
 extern int __mnt_fs_set_propagation_from_string(struct libmnt_fs *fs, const char *str)
 			__attribute__((nonnull(1)));
 extern int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf);
-int mnt_fs_lookup_id(const char *path, unsigned int *id, unsigned int flags);
 extern int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs);
+
+/* fsinfo.c */
+extern int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags);
+extern int mnt_get_id_fsinfo(unsigned int id,
+                        struct fsinfo_params *params,
+                        size_t params_size,
+                        char *buf,
+                        size_t *bufsz);
 
 /* context.c */
 extern struct libmnt_context *mnt_copy_context(struct libmnt_context *o);
