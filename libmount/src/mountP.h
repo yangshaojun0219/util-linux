@@ -422,6 +422,7 @@ extern int __mnt_fs_set_fstype_ptr(struct libmnt_fs *fs, char *fstype)
 extern int __mnt_fs_set_propagation_from_string(struct libmnt_fs *fs, const char *str)
 			__attribute__((nonnull(1)));
 extern int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf);
+int mnt_fs_lookup_id(const char *path, unsigned int *id, unsigned int flags);
 extern int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs);
 
 /* context.c */

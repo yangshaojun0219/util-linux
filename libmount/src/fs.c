@@ -1666,27 +1666,24 @@ static ssize_t fsinfo(int dfd, const char *filename,
 		       result_buffer, result_buf_size);
 }
 
-static int fsinfo_id2target(unsigned int id, char *buf, size_t bufsz)
+int mnt_fs_lookup_id(const char *path, unsigned int *id, unsigned int flags)
 {
-	/* open by ID to target */
-	char idstr[sizeof(stringify_value(UINT_MAX))];
-	ssize_t res;
-
-	/* ask for moutpoint name */
+	struct fsinfo_mount_info info;
 	struct fsinfo_params params = {
-		.request = FSINFO_ATTR_MOUNT_POINT_FULL,
-		.flags = FSINFO_FLAGS_QUERY_MOUNT
+		.flags		= FSINFO_FLAGS_QUERY_PATH,
+		.request	= FSINFO_ATTR_MOUNT_INFO,
+		.at_flags	= flags,
 	};
+	int rc;
 
-	snprintf(idstr, sizeof(idstr), "%u", id);
-	res = fsinfo(AT_FDCWD, idstr, &params, sizeof(params), buf, bufsz);
-	if (res < 0)
-		return -errno;
-	if ((size_t) res >= sizeof(buf))
-		return -ENAMETOOLONG;
-	buf[res] = '\0';
-
-	return 0;
+	errno = 0;
+	rc = fsinfo(AT_FDCWD, path,
+		    &params, sizeof(params), &info, sizeof(info));
+	if (rc == -1)
+		rc = -errno;
+	else
+		*id = info.mnt_id;
+	return rc;
 }
 
 static int fsinfo_buf2fs(struct libmnt_fs *fs,
@@ -1750,7 +1747,7 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs,
 int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 {
 	unsigned int i;
-	int fd, rc = 0;
+	int rc = 0;
 	char buf[BUFSIZ];
 	int requests[] = {
 		FSINFO_ATTR_SOURCE,
@@ -1762,29 +1759,33 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 		FSINFO_ATTR_MOUNT_TOPOLOGY
 	};
 
-	if (!fs->target && fs->id > 0) {
-		rc = fsinfo_id2target(fs->id, buf, sizeof(buf));
-		if (rc)
-			return rc;
-		rc = mnt_fs_set_target(fs, buf);
-		if (rc)
-			return rc;
-	}
-	if (!fs->target)
+	if (!fs->target && !fs->id)
 		return -EINVAL;
 
-	fd = open(fs->target, O_PATH);
-	if (fd < 0)
-		return fd;
+	if (fs->target && !fs->id) {
+		unsigned int id;
+
+		rc = mnt_fs_lookup_id(fs->target, &id, AT_NO_AUTOMOUNT);
+		if (rc < 0)
+			return rc;
+		fs->id = id;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(requests); i++) {
-		ssize_t res;
+		char idstr[sizeof(stringify_value(UINT_MAX))];
 		struct fsinfo_params params = {
 			.request = requests[i],
-			.flags = FSINFO_FLAGS_QUERY_FD
+			.flags = FSINFO_FLAGS_QUERY_MOUNT
 		};
+		ssize_t res;
 
-		res = fsinfo(fd, NULL, &params, sizeof(params), buf, sizeof(buf));
+		/* fs->target already set? */
+		if (fs->target &&
+		    params.request == FSINFO_ATTR_MOUNT_POINT_FULL)
+			continue;
+
+		snprintf(idstr, sizeof(idstr), "%u", fs->id);
+		res = fsinfo(AT_FDCWD, idstr, &params, sizeof(params), buf, sizeof(buf));
 		if (res < 0)
 			rc = res;
 		if ((size_t) res >= sizeof(buf))
@@ -1797,7 +1798,6 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
 
 	if (rc == 0)
 		fs->flags |= MNT_FS_KERNEL;
-	close(fd);
 	return rc;
 }
 
