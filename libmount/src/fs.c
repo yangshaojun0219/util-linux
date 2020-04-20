@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <sys/syscall.h>
 #include <linux/fsinfo.h>
+#include <linux/mount.h>
 
 #include "mountP.h"
 #include "strutils.h"
@@ -1728,6 +1729,8 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs, int request,
 		/* VFS  options (convert it to strings) */
 		free(fs->vfs_optstr);
 		fs->vfs_optstr = NULL;
+		if ((x->attr & (MOUNT_ATTR_NOATIME|MOUNT_ATTR_STRICTATIME)) == 0)
+			x->attr |= MS_RELATIME;
 		rc = mnt_optstr_apply_flags(&fs->vfs_optstr, x->attr,
 				mnt_get_builtin_optmap(MNT_LINUX_MAP));
 		break;
