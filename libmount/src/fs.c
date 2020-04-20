@@ -19,6 +19,8 @@
 #include <ctype.h>
 #include <blkid.h>
 #include <stddef.h>
+#include <sys/syscall.h>
+#include <linux/fsinfo.h>
 
 #include "mountP.h"
 #include "strutils.h"
@@ -1650,11 +1652,10 @@ int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf)
 	return 0;
 }
 
+#ifndef __NR_fsinfo
+#define __NR_fsinfo -1
+#endif
 
-#include <sys/syscall.h>
-#include <linux/fsinfo.h>
-
-#define __NR_fsinfo 441
 static ssize_t fsinfo(int dfd, const char *filename,
 	       struct fsinfo_params *params, size_t params_size,
 	       void *result_buffer, size_t result_buf_size)
