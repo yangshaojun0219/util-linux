@@ -30,7 +30,7 @@
  */
 struct fs_member_fsinfo {
 	size_t member;
-	int request;
+	unsigned int request;
 };
 
 static const struct fs_member_fsinfo fsinfo_map[] =
@@ -47,8 +47,32 @@ static const struct fs_member_fsinfo fsinfo_map[] =
 	{ offsetof(struct libmnt_fs, vfs_optstr), FSINFO_ATTR_MOUNT_INFO }
 };
 
+/* Unfortunatel, we cannot use FSINFO_ATTR_* in fs->fsinfo_done mask. Let's
+ * define our own magical constants.
+ */
+static inline unsigned int fsinfo_req2mask(unsigned int req)
+{
+	switch (req) {
+	case FSINFO_ATTR_IDS:
+		return (1 << 0);
+	case FSINFO_ATTR_CONFIGURATION:
+		return (1 << 1);
+	case FSINFO_ATTR_MOUNT_INFO:
+		return (1 << 2);
+	case FSINFO_ATTR_MOUNT_TOPOLOGY:
+		return (1 << 3);
+	case FSINFO_ATTR_MOUNT_PATH:
+		return (1 << 4);
+	case FSINFO_ATTR_SOURCE:
+		return (1 << 5);
+	case FSINFO_ATTR_MOUNT_POINT_FULL:
+		return (1 << 6);
+	}
+	return 0;
+}
+
 /* converts libmnt_fs struct member offset to FSINFO_ATTR_ request ID */
-static int fsinfo_off2req(size_t member_offset)
+static unsigned int fsinfo_off2req(size_t member_offset)
 {
 	size_t i;
 
@@ -1855,7 +1879,7 @@ static int __fs_fetch_fsinfo(struct libmnt_fs *fs,
 	else if (rc == 0)
 		rc = fsinfo_buf2fs(fs, request, buf, sz);
 
-	fs->fsinfo_done |= request;
+	fs->fsinfo_done |= fsinfo_req2mask(request);
 	return rc;
 }
 
@@ -1872,7 +1896,7 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs, int request)
 		return -EINVAL;
 
 	/* don't call the same request more than once */
-	if (fs->fsinfo_done & request)
+	if (fs->fsinfo_done & fsinfo_req2mask(request))
 		return 0;
 
 	/* ask for ID if missing */
@@ -1904,7 +1928,7 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs, int request)
 		for (i = 0; i < ARRAY_SIZE(fsinfo_map); i++) {
 			int req = fsinfo_map[i].request;
 
-			if (fs->fsinfo_done & req)
+			if (fs->fsinfo_done & fsinfo_req2mask(req))
 				continue;
 			rc = __fs_fetch_fsinfo(fs, idstr, req,
 					FSINFO_FLAGS_QUERY_MOUNT, 0);

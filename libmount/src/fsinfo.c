@@ -67,7 +67,7 @@ int mnt_fsinfo(const char *query,
 	assert(bufsz);
 	assert(params);
 
-	DBG(UTILS, ul_debug("fsinfo(2) [query=%s, request=%u, flags=%u, at_flags=%u]",
+	DBG(UTILS, ul_debug("fsinfo(2) [query=%s, request=0x%02x, flags=0x%02x, at_flags=0x%02x]",
 				query, params->request, params->flags, params->at_flags));
 
 	res = fsinfo(AT_FDCWD, query, params, params_size, buf, *bufsz);
