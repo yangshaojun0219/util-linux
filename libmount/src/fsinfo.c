@@ -53,13 +53,12 @@ int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags)
  * Call fsinfo(), fill @buf with the result, on success update @bufsz
  * to the real result size.
  */
-int mnt_get_id_fsinfo(	unsigned int id,
-			struct fsinfo_params *params,
-			size_t params_size,
-			char *buf,
-			size_t *bufsz)
+int mnt_fsinfo(const char *query,
+	       struct fsinfo_params *params,
+	       size_t params_size,
+	       char *buf,
+	       size_t *bufsz)
 {
-	char idstr[sizeof(stringify_value(UINT_MAX))];
 	ssize_t res;
 	int rc = 0;
 
@@ -67,9 +66,10 @@ int mnt_get_id_fsinfo(	unsigned int id,
 	assert(bufsz);
 	assert(params);
 
-	snprintf(idstr, sizeof(idstr), "%u", id);
+	DBG(UTILS, ul_debug(" fsinfo(2) [query=%s, request=%u, flags=%u, at_flags=%u]",
+				query, params->request, params->flags, params->at_flags));
 
-	res = fsinfo(AT_FDCWD, idstr, params, params_size, buf, *bufsz);
+	res = fsinfo(AT_FDCWD, query, params, params_size, buf, *bufsz);
 	if (res < 0)
 		rc = res;
 	if ((size_t) res >= *bufsz)

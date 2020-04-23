@@ -349,9 +349,10 @@ static int lookup_umount_fs_by_fsinfo(struct libmnt_context *cxt)
 	assert(mnt_fs_get_target(fs));
 
 	/* read data from kernel */
-	rc = mnt_fs_fetch_fsinfo(fs);
+	rc = mnt_fs_enable_fsinfo(fs, 1);
 	if (rc)
-		return rc;
+		/* return not-found if fsinfo() not avalable */
+		return rc == -ENOSYS ? 1 : rc;
 
 	/* merge utab to fs */
 	if (has_utab_entry(cxt, mnt_fs_get_target(fs))) {

@@ -356,3 +356,9 @@ MOUNT_2_35 {
 	mnt_context_get_target_prefix;
 	mnt_context_set_target_prefix;
 } MOUNT_2.34;
+
+MOUNT_2_36 {
+	mnt_fs_enable_fsinfo;
+	mnt_fs_has_fsinfo;
+} MOUNT_2_35;
+

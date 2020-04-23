@@ -24,6 +24,53 @@
 #include "mountP.h"
 #include "strutils.h"
 
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+/*
+ * Map libmnt_fs struct members to fsinfo() FSINFO_ATTR_* requests.
+ */
+struct fs_member_fsinfo {
+	size_t member;
+	int request;
+};
+
+static const struct fs_member_fsinfo fsinfo_map[] =
+{
+	{ offsetof(struct libmnt_fs, devno),	FSINFO_ATTR_IDS },
+	{ offsetof(struct libmnt_fs, fs_optstr),FSINFO_ATTR_CONFIGURATION },
+	{ offsetof(struct libmnt_fs, fstype),	FSINFO_ATTR_IDS },
+	{ offsetof(struct libmnt_fs, id),	FSINFO_ATTR_MOUNT_INFO },
+	{ offsetof(struct libmnt_fs, parent),	FSINFO_ATTR_MOUNT_TOPOLOGY },
+	{ offsetof(struct libmnt_fs, propagation), FSINFO_ATTR_MOUNT_TOPOLOGY },
+	{ offsetof(struct libmnt_fs, root),	FSINFO_ATTR_MOUNT_PATH },
+	{ offsetof(struct libmnt_fs, source),	FSINFO_ATTR_SOURCE },
+	{ offsetof(struct libmnt_fs, target),	FSINFO_ATTR_MOUNT_POINT_FULL },
+	{ offsetof(struct libmnt_fs, vfs_optstr), FSINFO_ATTR_MOUNT_INFO }
+};
+
+/* converts libmnt_fs struct member offset to FSINFO_ATTR_ request ID */
+static int fsinfo_off2req(size_t member_offset)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(fsinfo_map); i++)
+		if (fsinfo_map[i].member == member_offset)
+			return fsinfo_map[i].request;
+	return -EINVAL;
+}
+
+#define mnt_fs_fetch_member_fsinfo(_fs, _member) __extension__ ({ \
+		const int __r = fsinfo_off2req(offsetof(__typeof__(*(_fs)), _member)); \
+		if (__r >= 0) \
+			DBG(FS, ul_debugobj(_fs, "fsinfo for '%s'", #_member)); \
+		__r >= 0 ? mnt_fs_fetch_fsinfo(_fs, __r) : __r; \
+})
+
+#else /* !USE_LIBMOUNT_SUPPORT_FSINFO */
+#define mnt_fs_fetch_member_fsinfo(_fs, _member) __extension__ ({ \
+		(0); \
+})
+#endif
+
 /**
  * mnt_new_fs:
  *
@@ -348,6 +395,8 @@ const char *mnt_fs_get_srcpath(struct libmnt_fs *fs)
 	/* fstab-like fs */
 	if (fs->tagname)
 		return NULL;	/* the source contains a "NAME=value" */
+	if (!fs->source && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, source);
 	return fs->source;
 }
 
@@ -360,6 +409,8 @@ const char *mnt_fs_get_srcpath(struct libmnt_fs *fs)
  */
 const char *mnt_fs_get_source(struct libmnt_fs *fs)
 {
+	if (!fs->source && !fs->tagname && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, source);
 	return fs ? fs->source : NULL;
 }
 
@@ -536,7 +587,11 @@ int mnt_fs_get_tag(struct libmnt_fs *fs, const char **name, const char **value)
  */
 const char *mnt_fs_get_target(struct libmnt_fs *fs)
 {
-	return fs ? fs->target : NULL;
+	if (!fs)
+		return NULL;
+	if (!fs->target && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, target);
+	return fs->target;
 }
 
 /**
@@ -587,10 +642,13 @@ int __mnt_fs_set_propagation_from_string(struct libmnt_fs *fs, const char *str)
  */
 int mnt_fs_get_propagation(struct libmnt_fs *fs, unsigned long *flags)
 {
+	if (!fs)
+		return -EINVAL;
+	if (!fs->propagation && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, propagation);
 	if (fs && flags)
 		*flags = fs->propagation;
-
-	return fs ? 0 : -EINVAL;
+	return 0;
 }
 
 /**
@@ -645,7 +703,11 @@ int mnt_fs_is_netfs(struct libmnt_fs *fs)
  */
 const char *mnt_fs_get_fstype(struct libmnt_fs *fs)
 {
-	return fs ? fs->fstype : NULL;
+	if (!fs)
+		return NULL;
+	if (!fs->fstype && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, fstype);
+	return fs->fstype;
 }
 
 /* Used by the struct libmnt_file parser only */
@@ -770,7 +832,7 @@ char *mnt_fs_strdup_options(struct libmnt_fs *fs)
 	if (fs->optstr)
 		return strdup(fs->optstr);
 
-	res = merge_optstr(fs->vfs_optstr, fs->fs_optstr);
+	res = merge_optstr(mnt_fs_get_vfs_options(fs), mnt_fs_get_fs_options(fs));
 	if (!res && errno)
 		return NULL;
 	if (fs->user_optstr &&
@@ -938,7 +1000,11 @@ int mnt_fs_prepend_options(struct libmnt_fs *fs, const char *optstr)
  */
 const char *mnt_fs_get_fs_options(struct libmnt_fs *fs)
 {
-	return fs ? fs->fs_optstr : NULL;
+	if (!fs)
+		return NULL;
+	if (!fs->fs_optstr && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, fs_optstr);
+	return fs->fs_optstr;
 }
 
 /**
@@ -949,7 +1015,11 @@ const char *mnt_fs_get_fs_options(struct libmnt_fs *fs)
  */
 const char *mnt_fs_get_vfs_options(struct libmnt_fs *fs)
 {
-	return fs ? fs->vfs_optstr : NULL;
+	if (!fs)
+		return NULL;
+	if (!fs->vfs_optstr && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, vfs_optstr);
+	return fs->vfs_optstr;
 }
 
 /**
@@ -1091,7 +1161,11 @@ int mnt_fs_set_passno(struct libmnt_fs *fs, int passno)
  */
 const char *mnt_fs_get_root(struct libmnt_fs *fs)
 {
-	return fs ? fs->root : NULL;
+	if (!fs)
+		return NULL;
+	if (!fs->root && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, root);
+	return fs->root;
 }
 
 /**
@@ -1198,7 +1272,11 @@ int mnt_fs_set_bindsrc(struct libmnt_fs *fs, const char *src)
  */
 int mnt_fs_get_id(struct libmnt_fs *fs)
 {
-	return fs ? fs->id : -EINVAL;
+	if (!fs)
+		return 0;
+	if (!fs->id && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, id);
+	return fs->id;
 }
 
 /**
@@ -1209,7 +1287,11 @@ int mnt_fs_get_id(struct libmnt_fs *fs)
  */
 int mnt_fs_get_parent_id(struct libmnt_fs *fs)
 {
-	return fs ? fs->parent : -EINVAL;
+	if (!fs)
+		return 0;
+	if (!fs->parent && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, parent);
+	return fs->parent;
 }
 
 /**
@@ -1220,7 +1302,11 @@ int mnt_fs_get_parent_id(struct libmnt_fs *fs)
  */
 dev_t mnt_fs_get_devno(struct libmnt_fs *fs)
 {
-	return fs ? fs->devno : 0;
+	if (!fs)
+		return 0;
+	if (!fs->devno && mnt_fs_has_fsinfo(fs))
+		mnt_fs_fetch_member_fsinfo(fs, devno);
+	return fs->devno;
 }
 
 /**
@@ -1250,9 +1336,9 @@ int mnt_fs_get_option(struct libmnt_fs *fs, const char *name,
 
 	if (!fs)
 		return -EINVAL;
-	if (fs->fs_optstr)
+	if (mnt_fs_get_fs_options(fs))
 		rc = mnt_optstr_get_option(fs->fs_optstr, name, value, valsz);
-	if (rc == 1 && fs->vfs_optstr)
+	if (rc == 1 && mnt_fs_get_vfs_options(fs))
 		rc = mnt_optstr_get_option(fs->vfs_optstr, name, value, valsz);
 	if (rc == 1 && fs->user_optstr)
 		rc = mnt_optstr_get_option(fs->user_optstr, name, value, valsz);
@@ -1353,7 +1439,7 @@ int mnt_fs_match_target(struct libmnt_fs *fs, const char *target,
 {
 	int rc = 0;
 
-	if (!fs || !target || !fs->target)
+	if (!fs || !target || !mnt_fs_get_target(fs))
 		return 0;
 
 	/* 1) native paths */
@@ -1470,7 +1556,7 @@ int mnt_fs_match_source(struct libmnt_fs *fs, const char *source,
  */
 int mnt_fs_match_fstype(struct libmnt_fs *fs, const char *types)
 {
-	return mnt_match_fstype(fs->fstype, types);
+	return mnt_match_fstype(mnt_fs_get_fstype(fs), types);
 }
 
 /**
@@ -1651,12 +1737,55 @@ int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf)
 	return 0;
 }
 
+/**
+ * mnt_fs_has_fsinfo:
+ * @fs: libmnt_fs instance
+ *
+ * Returns: 1 is fsinfo enabled in @fs or 0.
+ */
+int mnt_fs_has_fsinfo(struct libmnt_fs *fs)
+{
+	return fs ? fs->fsinfo_enabled : 0;
+}
+
 #ifndef USE_LIBMOUNT_SUPPORT_FSINFO
-int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)))
+int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)),
+			int request __attribute__((__unused__)))
+{
+	return -ENOSYS;
+}
+
+/**
+ * mnt_fs_enable_fsinfo:
+ * @fs: libmnt_fs instance
+ * @enable: 1 or 1
+ *
+ * Enable fetch FS information from kernel by fsinfo(). FS target or ID has to
+ * be set in the @fs. If not syscall not avalable than returns -ENOSYS.
+ */
+int mnt_fs_enable_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)),
+			 int enable __attribute__((__unused__)))
 {
 	return -ENOSYS;
 }
 #else /* USE_LIBMOUNT_SUPPORT_FSINFO */
+
+/**
+ * mnt_fs_enable_fsinfo:
+ * @fs: libmnt_fs instance
+ * @enable: 1 or 1
+ *
+ * Enable fetch FS information from kernel by fsinfo(). FS target or ID has to
+ * be set in the @fs. f not syscall not avalable than returns -ENOSYS.
+ */
+int mnt_fs_enable_fsinfo(struct libmnt_fs *fs, int enable)
+{
+	assert(fs);
+	fs->fsinfo_enabled = enable ? 1 : 0;
+
+	/* TODO: return -ENOSYS if fsinfo() is not avalable */
+	return 0;
+}
 
 static int fsinfo_buf2fs(struct libmnt_fs *fs,
 			 int request, char *buf, size_t len)
@@ -1716,50 +1845,84 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs,
 	return rc;
 }
 
-int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs)
+
+/* fetch and apply to fs */
+static int __fs_fetch_fsinfo(struct libmnt_fs *fs,
+			char *query,
+			unsigned int request,
+			unsigned int flags,
+			unsigned int at_flags)
 {
-	unsigned int i;
-	int rc = 0;
 	char buf[BUFSIZ];
-	int requests[] = {
-		FSINFO_ATTR_SOURCE,
-		FSINFO_ATTR_MOUNT_POINT_FULL,
-		FSINFO_ATTR_CONFIGURATION,
-		FSINFO_ATTR_MOUNT_PATH,
-		FSINFO_ATTR_IDS,
-		FSINFO_ATTR_MOUNT_INFO,
-		FSINFO_ATTR_MOUNT_TOPOLOGY
+	size_t sz = sizeof(buf);
+	int rc;
+
+	struct fsinfo_params params = {
+		.request = request,
+		.flags = flags,
+		.at_flags = at_flags
 	};
+
+	rc = mnt_fsinfo(query, &params, sizeof(params), buf, &sz);
+	if (rc == 0)
+		rc = fsinfo_buf2fs(fs, request, buf, sz);
+
+	fs->fsinfo_done |= request;
+	return rc;
+}
+
+/*
+ * Call fsinfo() for specified @request and apply result to @fs. If the @request
+ * is -1 than call all fsinfo() requests to fill complete @fs.
+ */
+int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs, int request)
+{
+	int rc = 0;
+	char idstr[sizeof(stringify_value(UINT_MAX))];
 
 	if (!fs->target && !fs->id)
 		return -EINVAL;
 
-	if (fs->target && !fs->id) {
-		unsigned int id;
+	/* don't call the same request more than once */
+	if (fs->fsinfo_done & request)
+		return 0;
 
-		rc = mnt_get_target_id(fs->target, &id, AT_NO_AUTOMOUNT);
+	/* ask for ID if missing */
+	if (fs->target && !fs->id) {
+		int req = fsinfo_off2req(offsetof(struct libmnt_fs, id));
+		rc = __fs_fetch_fsinfo(fs, fs->target,
+				req,
+				FSINFO_FLAGS_QUERY_PATH,
+				AT_NO_AUTOMOUNT);
 		if (rc < 0)
 			return rc;
-		fs->id = id;
+		if (!fs->id)
+			return -EINVAL;
+		if (req == request)
+			return rc;
+
 	}
 
-	for (i = 0; i < ARRAY_SIZE(requests); i++) {
-		struct fsinfo_params params = {
-			.request = requests[i],
-			.flags = FSINFO_FLAGS_QUERY_MOUNT
-		};
-		size_t sz = sizeof(buf);
+	snprintf(idstr, sizeof(idstr), "%u", fs->id);
 
-		/* fs->target already set? */
-		if (fs->target &&
-		    params.request == FSINFO_ATTR_MOUNT_POINT_FULL)
-			continue;
+	if (request > -1)
+		/* one request */
+		rc = __fs_fetch_fsinfo(fs, idstr, request,
+				FSINFO_FLAGS_QUERY_MOUNT, 0);
+	else {
+		/* fetch all */
+		size_t i;
 
-		rc = mnt_get_id_fsinfo(fs->id, &params, sizeof(params), buf, &sz);
-		if (rc == 0)
-			rc = fsinfo_buf2fs(fs, requests[i], buf, sz);
-		if (rc)
-			break;	/* error */
+		for (i = 0; i < ARRAY_SIZE(fsinfo_map); i++) {
+			int req = fsinfo_map[i].request;
+
+			if (fs->fsinfo_done & req)
+				continue;
+			rc = __fs_fetch_fsinfo(fs, idstr, req,
+					FSINFO_FLAGS_QUERY_MOUNT, 0);
+			if (rc < 0)
+				break;
+		}
 	}
 
 	if (rc == 0)

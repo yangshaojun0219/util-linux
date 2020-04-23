@@ -227,6 +227,9 @@ struct libmnt_fs {
 	char		*comment;	/* fstab comment */
 
 	void		*userdata;	/* library independent data */
+
+	unsigned int	fsinfo_enabled : 1;
+	unsigned int	fsinfo_done;	/* FSINFO_ATTR_* mask */
 };
 
 /*
@@ -426,16 +429,16 @@ extern int __mnt_fs_set_fstype_ptr(struct libmnt_fs *fs, char *fstype)
 extern int __mnt_fs_set_propagation_from_string(struct libmnt_fs *fs, const char *str)
 			__attribute__((nonnull(1)));
 extern int mnt_fs_merge_utab(struct libmnt_fs *fs, struct libmnt_fs *uf);
-extern int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs);
+extern int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs, int request);
 
 /* fsinfo.c */
 #ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 extern int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags);
-extern int mnt_get_id_fsinfo(unsigned int id,
-                        struct fsinfo_params *params,
-                        size_t params_size,
-                        char *buf,
-                        size_t *bufsz);
+extern int mnt_fsinfo(const char *query,
+               struct fsinfo_params *params,
+               size_t params_size,
+               char *buf,
+               size_t *bufsz);
 #endif
 
 /* context.c */
