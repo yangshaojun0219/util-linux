@@ -338,7 +338,6 @@ static int lookup_umount_fs_by_mountinfo(struct libmnt_context *cxt, const char 
 static int lookup_umount_fs_by_fsinfo(struct libmnt_context *cxt)
 {
 	struct libmnt_fs *fs;
-	int rc;
 
 	DBG(CXT, ul_debugobj(cxt, " lookup by fsinfo"));
 
@@ -348,11 +347,16 @@ static int lookup_umount_fs_by_fsinfo(struct libmnt_context *cxt)
 	assert(fs);
 	assert(mnt_fs_get_target(fs));
 
-	/* read data from kernel */
-	rc = mnt_fs_enable_fsinfo(fs, 1);
-	if (rc)
-		/* return not-found if fsinfo() not avalable */
-		return rc == -ENOSYS ? 1 : rc;
+	/*
+	 * It's better to try to fetch someting we really need (e.g. fstype)
+	 * than call mnt_has_fsinfo(). If fsinfo() syscall is not supported
+	 * than library automatically calls mnt_fs_enable_fsinfo(false) and
+	 * the next mnt_fs_has_fsinfo() returns 0.
+	 */
+	mnt_fs_enable_fsinfo(fs, 1);
+	mnt_fs_get_fstype(fs);
+	if (!mnt_fs_has_fsinfo(fs))
+		return 1;
 
 	/* merge utab to fs */
 	if (has_utab_entry(cxt, mnt_fs_get_target(fs))) {

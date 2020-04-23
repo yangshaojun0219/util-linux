@@ -1748,6 +1748,23 @@ int mnt_fs_has_fsinfo(struct libmnt_fs *fs)
 	return fs ? fs->fsinfo_enabled : 0;
 }
 
+/**
+ * mnt_fs_enable_fsinfo:
+ * @fs: libmnt_fs instance
+ * @enable: 1 or 0
+ *
+ * Enable on-demand fsinfo() use. See also mnt_has_fsinfo(). @fs target or ID
+ * has to be set in the @fs. The fsinfo for the @fs maybe automaticaly disabled
+ * later if kernel does not suppor this feature.
+ */
+int mnt_fs_enable_fsinfo(struct libmnt_fs *fs, int enable)
+{
+	assert(fs);
+	fs->fsinfo_enabled = enable ? 1 : 0;
+	DBG(FS, ul_debugobj(fs, "fsinfo %s", enable ? "ENABLED" : "DISABLED"));
+	return 0;
+}
+
 #ifndef USE_LIBMOUNT_SUPPORT_FSINFO
 int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)),
 			int request __attribute__((__unused__)))
@@ -1755,37 +1772,7 @@ int mnt_fs_fetch_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)),
 	return -ENOSYS;
 }
 
-/**
- * mnt_fs_enable_fsinfo:
- * @fs: libmnt_fs instance
- * @enable: 1 or 1
- *
- * Enable fetch FS information from kernel by fsinfo(). FS target or ID has to
- * be set in the @fs. If not syscall not avalable than returns -ENOSYS.
- */
-int mnt_fs_enable_fsinfo(struct libmnt_fs *fs __attribute__((__unused__)),
-			 int enable __attribute__((__unused__)))
-{
-	return -ENOSYS;
-}
 #else /* USE_LIBMOUNT_SUPPORT_FSINFO */
-
-/**
- * mnt_fs_enable_fsinfo:
- * @fs: libmnt_fs instance
- * @enable: 1 or 1
- *
- * Enable fetch FS information from kernel by fsinfo(). FS target or ID has to
- * be set in the @fs. f not syscall not avalable than returns -ENOSYS.
- */
-int mnt_fs_enable_fsinfo(struct libmnt_fs *fs, int enable)
-{
-	assert(fs);
-	fs->fsinfo_enabled = enable ? 1 : 0;
-
-	/* TODO: return -ENOSYS if fsinfo() is not avalable */
-	return 0;
-}
 
 static int fsinfo_buf2fs(struct libmnt_fs *fs,
 			 int request, char *buf, size_t len)
@@ -1856,7 +1843,6 @@ static int __fs_fetch_fsinfo(struct libmnt_fs *fs,
 	char buf[BUFSIZ];
 	size_t sz = sizeof(buf);
 	int rc;
-
 	struct fsinfo_params params = {
 		.request = request,
 		.flags = flags,
@@ -1864,7 +1850,9 @@ static int __fs_fetch_fsinfo(struct libmnt_fs *fs,
 	};
 
 	rc = mnt_fsinfo(query, &params, sizeof(params), buf, &sz);
-	if (rc == 0)
+	if (rc == -ENOSYS)
+		mnt_fs_enable_fsinfo(fs, 0);
+	else if (rc == 0)
 		rc = fsinfo_buf2fs(fs, request, buf, sz);
 
 	fs->fsinfo_done |= request;

@@ -521,6 +521,9 @@ extern int mnt_fs_to_mntent(struct libmnt_fs *fs, struct mntent **mnt);
 extern int mnt_fs_enable_fsinfo(struct libmnt_fs *fs, int enable);
 extern int mnt_fs_has_fsinfo(struct libmnt_fs *fs);
 
+/* fsinfo.c */
+extern int mnt_has_fsinfo(void);
+
 /* tab-parse.c */
 extern struct libmnt_table *mnt_new_table_from_file(const char *filename)
 			__ul_attribute__((warn_unused_result));

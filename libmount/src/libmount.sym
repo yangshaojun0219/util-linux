@@ -360,5 +360,6 @@ MOUNT_2_35 {
 MOUNT_2_36 {
 	mnt_fs_enable_fsinfo;
 	mnt_fs_has_fsinfo;
+	mnt_has_fsinfo;
 } MOUNT_2_35;
 

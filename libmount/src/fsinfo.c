@@ -12,7 +12,6 @@
 #include "mountP.h"
 
 #ifdef USE_LIBMOUNT_SUPPORT_FSINFO
-
 /* libc fallback */
 #ifndef HAVE_FSINFO
 # include <sys/syscall.h>
@@ -28,6 +27,8 @@ static ssize_t fsinfo(int dfd, const char *filename,
 		       result_buffer, result_buf_size);
 }
 #endif /* HAVE_FSINFO */
+
+static int have_fsinfo = -1;
 
 int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags)
 {
@@ -66,17 +67,52 @@ int mnt_fsinfo(const char *query,
 	assert(bufsz);
 	assert(params);
 
-	DBG(UTILS, ul_debug(" fsinfo(2) [query=%s, request=%u, flags=%u, at_flags=%u]",
+	DBG(UTILS, ul_debug("fsinfo(2) [query=%s, request=%u, flags=%u, at_flags=%u]",
 				query, params->request, params->flags, params->at_flags));
 
 	res = fsinfo(AT_FDCWD, query, params, params_size, buf, *bufsz);
 	if (res < 0)
-		rc = res;
-	if ((size_t) res >= *bufsz)
+		rc = -errno;
+	else if ((size_t) res >= *bufsz)
 		rc = -ENAMETOOLONG;
-	if (rc == 0)
+	else if (rc == 0)
 		*bufsz = res;
+	if (have_fsinfo == -1)
+		have_fsinfo = rc == -ENOSYS ? 0 : 1;
+
+	if (rc)
+		DBG(UTILS, ul_debug("fsinfo(2) [rc=%d %m]", rc));
 	return rc;
 }
 
+
 #endif /* USE_LIBMOUNT_SUPPORT_FSINFO */
+
+/*
+ * Public API
+ */
+
+/**
+ * mnt_has_fsinfo:
+ *
+ * Returns: 1 is fsinfo() syscall is supported, or 0
+ */
+int mnt_has_fsinfo(void)
+{
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+	if (have_fsinfo == -1) {
+		struct fsinfo_mount_info info;
+		struct fsinfo_params params = {
+			.flags   = FSINFO_FLAGS_QUERY_PATH,
+			.request = FSINFO_ATTR_MOUNT_INFO,
+		};
+		size_t sz = sizeof(info);
+
+		mnt_fsinfo("/", &params, sizeof(params), (char *)&info, &sz);
+	}
+	return have_fsinfo;
+#else
+	return 0;
+#endif
+}
+
