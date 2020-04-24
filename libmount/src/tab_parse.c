@@ -712,6 +712,29 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 	return rc;
 }
 
+static int parse_fsinfo_init_fs(
+			struct libmnt_table *tb,
+			struct libmnt_fs *fs,
+			unsigned int id,
+			struct libmnt_fs *parent,
+			struct libmnt_parser *pa)
+{
+	int rc = 0;
+
+	fs->flags |= MNT_FS_KERNEL;
+	fs->id = id;
+	fs->parent = parent ? parent->id : 0;
+
+	mnt_fs_enable_fsinfo(fs, 1);
+
+	if (tb->fltrcb && tb->fltrcb(fs, tb->fltrcb_data))
+		rc = 1;	/* filtered out by callback... */
+	if (!rc)
+		rc = kernel_fs_postparse(tb, fs, pa);
+	return rc;
+}
+
+
 #ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 static int table_parse_fetch_chldren(struct libmnt_table *tb,
 				     unsigned int id, struct libmnt_fs *parent,
@@ -722,12 +745,32 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb,
 	size_t i, count;
 	int rc = 0;
 
+	assert(id);
+
+	/* add root fs */
+	if (!parent) {
+		DBG(TAB, ul_debugobj(tb, "fsinfo: add root FS"));
+		parent = mnt_new_fs();
+		if (!parent) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		rc = parse_fsinfo_init_fs(tb, parent, id, NULL, pa);
+		if (!rc)
+			rc = mnt_table_add_fs(tb, parent);
+		if (rc)
+			goto out;
+		pa->has_root_fs = 1;
+	}
+
+	/* children list */
 	rc = mnt_fsinfo_get_children(id, &mounts, &count);
 	if (rc != 0)
 		goto out;
 	if (!count)
 		goto out;
 
+	/* add childern to the table */
 	for (i = 0; i < count; i++) {
 		if (!fs) {
 			fs = mnt_new_fs();
@@ -736,37 +779,14 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb,
 				goto out;
 			}
 		}
-		fs->id = mounts[i].mnt_id;
-
-		mnt_fs_enable_fsinfo(fs, 1);
-
-		if (!rc && tb->fltrcb && tb->fltrcb(fs, tb->fltrcb_data))
-			rc = 1;	/* filtered out by callback... */
+		rc = parse_fsinfo_init_fs(tb, fs, mounts[i].mnt_id, parent, pa);
 		if (!rc)
 			rc = mnt_table_add_fs(tb, fs);
 		if (!rc) {
-			/* Using fsinfo() is equivalent to parsing
-			 * mountinfo.
-			 */
-			rc = kernel_fs_postparse(tb, fs, pa);
-			if (rc) {
-				mnt_table_remove_fs(tb, fs);
-				goto done;
-			}
-
-			/* save one fsinfo() call */
-			fs->parent = parent ? parent->id : 0;
-
-			/* we can be sure the current fs is root */
-			if (parent == NULL && i == 0)
-				pa->has_root_fs = 1;
-
-			/* recursively read children */
 			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs), fs, pa);
 			if (rc)
 				mnt_table_remove_fs(tb, fs);
 		}
-done:
 		if (rc) {
 			if (rc > 0) {
 				mnt_reset_fs(fs);
@@ -792,7 +812,7 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 	int rc;
 	struct libmnt_parser pa = { .filename = _PATH_PROC_MOUNTINFO };
 
-	DBG(TAB, ul_debugobj(tb, "fsinfo: start parsing [entries=%d, filter=%s]",
+	DBG(TAB, ul_debugobj(tb, "fsinfo parse: start parsing [entries=%d, filter=%s]",
 				mnt_table_get_nents(tb), tb->fltrcb ? "yes" : "not"));
 
 	rc = mnt_get_target_id("/", &id, AT_NO_AUTOMOUNT);
@@ -803,11 +823,11 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 	if (rc < 0)
 		goto err;
 
-	DBG(TAB, ul_debugobj(tb, "fsinfo: stop parsing (%d entries)",
+	DBG(TAB, ul_debugobj(tb, "fsinfo parse : stop parsing (%d entries)",
 				mnt_table_get_nents(tb)));
 	return 0;
 err:
-	DBG(TAB, ul_debugobj(tb, "fsinfo: error (rc=%d)", rc));
+	DBG(TAB, ul_debugobj(tb, "fsinfo parse: error (rc=%d)", rc));
 	return rc;
 }
 #endif /* USE_LIBMOUNT_SUPPORT_FSINFO */

@@ -1792,7 +1792,7 @@ int mnt_fs_enable_fsinfo(struct libmnt_fs *fs, int enable)
 {
 	assert(fs);
 	fs->fsinfo_enabled = enable ? 1 : 0;
-	DBG(FS, ul_debugobj(fs, "fsinfo %s", enable ? "ENABLED" : "DISABLED"));
+	/*DBG(FS, ul_debugobj(fs, "fsinfo %s", enable ? "ENABLED" : "DISABLED"));*/
 	return 0;
 }
 
