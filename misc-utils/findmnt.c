@@ -895,7 +895,7 @@ static int tab_is_tree(struct libmnt_table *tb)
 
 	rc = (mnt_table_next_fs(tb, itr, &fs) == 0 &&
 	      mnt_fs_is_kernel(fs) &&
-	      mnt_fs_get_root(fs));
+	      mnt_fs_get_id(fs));
 
 	mnt_free_iter(itr);
 	return rc;
