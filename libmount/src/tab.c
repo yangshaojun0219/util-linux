@@ -63,7 +63,7 @@ int is_mountinfo(struct libmnt_table *tb)
 		return 0;
 
 	fs = list_first_entry(&tb->ents, struct libmnt_fs, ents);
-	if (fs && mnt_fs_is_kernel(fs) && mnt_fs_get_root(fs))
+	if (fs && mnt_fs_is_kernel(fs) && mnt_fs_get_id(fs))
 		return 1;
 
 	return 0;
@@ -444,7 +444,6 @@ int mnt_table_add_fs(struct libmnt_table *tb, struct libmnt_fs *fs)
 {
 	if (!tb || !fs)
 		return -EINVAL;
-
 	if (fs->tab)
 		return -EBUSY;
 
@@ -455,7 +454,10 @@ int mnt_table_add_fs(struct libmnt_table *tb, struct libmnt_fs *fs)
 
 	/* don't use mnt_fs_get_() in debug to avoid fsinfo() calls in on-emand
 	 * mode */
-	DBG(TAB, ul_debugobj(tb, "add entry: %s %s", fs->source, fs->target));
+	if (!fs->target || !fs->source)
+		DBG(TAB, ul_debugobj(tb, "add entry: id=%u parent=%u", fs->id, fs->parent));
+	else
+		DBG(TAB, ul_debugobj(tb, "add entry: %s %s", fs->source, fs->target));
 	return 0;
 }
 
@@ -631,6 +633,8 @@ int mnt_table_get_root_fs(struct libmnt_table *tb, struct libmnt_fs **root)
 		}
 	}
 
+	DBG(TAB, ul_debugobj(tb, "expected root id=%d", root_id));
+
 	/* go to the root node by "parent_id -> id" relation */
 	while (*root) {
 		struct libmnt_fs *x = get_parent_fs(tb, *root);
@@ -664,8 +668,8 @@ int mnt_table_next_child_fs(struct libmnt_table *tb, struct libmnt_iter *itr,
 	if (!tb || !itr || !parent || !is_mountinfo(tb))
 		return -EINVAL;
 
-	DBG(TAB, ul_debugobj(tb, "lookup next child of '%s'",
-				mnt_fs_get_target(parent)));
+	DBG(TAB, ul_debugobj(tb, "lookup next child of '%d'",
+				mnt_fs_get_id(parent)));
 
 	parent_id = mnt_fs_get_id(parent);
 
