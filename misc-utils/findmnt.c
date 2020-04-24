@@ -81,7 +81,8 @@ enum {
 enum {
 	TABTYPE_FSTAB = 1,
 	TABTYPE_MTAB,
-	TABTYPE_KERNEL
+	TABTYPE_KERNEL,
+	TABTYPE_FSINFO
 };
 
 /* column names */
@@ -844,6 +845,9 @@ static struct libmnt_table *parse_tabfiles(char **files,
 
 			rc = mnt_table_parse_file(tb, path);
 			break;
+		case TABTYPE_FSINFO:
+			rc = mnt_table_parse_fsinfo(tb);
+			break;
 		}
 		if (rc) {
 			mnt_unref_table(tb);
@@ -1220,7 +1224,9 @@ static void __attribute__((__noreturn__)) usage(void)
 		"                          (includes user space mount options)\n"), out);
 	fputs(_(" -k, --kernel           search in kernel table of mounted\n"
 		"                          filesystems (default)\n"), out);
+	fputs(_("     --fsinfo           like -k, but use fsinfo kernel interface\n"), out);
 	fputc('\n', out);
+
 	fputs(_(" -p, --poll[=<list>]    monitor changes in table of mounted filesystems\n"), out);
 	fputs(_(" -w, --timeout <num>    upper limit in milliseconds that --poll will block\n"), out);
 	fputc('\n', out);
@@ -1294,7 +1300,8 @@ int main(int argc, char *argv[])
 		FINDMNT_OPT_TREE,
 		FINDMNT_OPT_OUTPUT_ALL,
 		FINDMNT_OPT_PSEUDO,
-		FINDMNT_OPT_REAL
+		FINDMNT_OPT_REAL,
+		FINDMNT_OPT_FSINFO
 	};
 
 	static const struct option longopts[] = {
@@ -1307,6 +1314,7 @@ int main(int argc, char *argv[])
 		{ "evaluate",	    no_argument,       NULL, 'e'		 },
 		{ "first-only",	    no_argument,       NULL, 'f'		 },
 		{ "fstab",	    no_argument,       NULL, 's'		 },
+		{ "fsinfo",         no_argument,       NULL, FINDMNT_OPT_FSINFO  },
 		{ "help",	    no_argument,       NULL, 'h'		 },
 		{ "invert",	    no_argument,       NULL, 'i'		 },
 		{ "json",	    no_argument,       NULL, 'J'		 },
@@ -1512,7 +1520,9 @@ int main(int argc, char *argv[])
 		case FINDMNT_OPT_REAL:
 			flags |= FL_REAL;
 			break;
-
+		case FINDMNT_OPT_FSINFO:
+			tabtype = TABTYPE_FSINFO;
+			break;
 		case 'h':
 			usage();
 		case 'V':
@@ -1613,7 +1623,7 @@ int main(int argc, char *argv[])
 		}
 		mnt_table_set_cache(tb, cache);
 
-		if (tabtype != TABTYPE_KERNEL)
+		if (tabtype != TABTYPE_KERNEL || tabtype != TABTYPE_FSINFO)
 			cache_set_targets(cache);
 	}
 
@@ -1699,7 +1709,7 @@ int main(int argc, char *argv[])
 		rc = add_matching_lines(tb, table, direction);
 
 		if (rc != 0
-		    && tabtype == TABTYPE_KERNEL
+		    && (tabtype == TABTYPE_KERNEL || tabtype == TABTYPE_FSINFO)
 		    && (flags & FL_NOSWAPMATCH)
 		    && !(flags & FL_STRICTTARGET)
 		    && get_match(COL_TARGET)) {
