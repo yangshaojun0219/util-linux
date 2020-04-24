@@ -40,6 +40,7 @@ int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags)
 	};
 	int rc = 0;
 
+	DBG(UTILS, ul_debug("fsinfo: reading ID for %s", path));
 	errno = 0;
 	if (fsinfo(AT_FDCWD, path,
 		    &params, sizeof(params), &info, sizeof(info)) < 0)
@@ -70,17 +71,19 @@ int mnt_fsinfo(const char *query,
 				query, params->request, params->flags, params->at_flags));
 	errno = 0;
 	res = fsinfo(AT_FDCWD, query, params, params_size, buf, *bufsz);
-	if (res < 0)
-		rc = -errno;
-	else if ((size_t) res >= *bufsz)
+	if (res < 0) {
+		rc = res;
+		errno = -res;
+	} else if ((size_t) res > *bufsz) {
+		DBG(UTILS, ul_debug("fsinfo(2) ENAMETOOLONG: result=%lu, expected=%lu", res, *bufsz));
 		rc = -ENAMETOOLONG;
-	else if (rc == 0)
+	} else if (rc == 0)
 		*bufsz = res;
 	if (have_fsinfo == -1)
 		have_fsinfo = rc == -ENOSYS ? 0 : 1;
 
 	if (rc)
-		DBG(UTILS, ul_debug("fsinfo(2) [rc=%d %m]", rc));
+		DBG(UTILS, ul_debug("fsinfo(2) [res=%ld]", res));
 	return rc;
 }
 
@@ -111,6 +114,7 @@ static void *fsinfo_alloc_attrs(unsigned int id,
 		}
 		buf = tmp;
 
+		errno = 0;
 		ret = fsinfo(AT_FDCWD, idstr, &params, sizeof(params), buf, bufsz);
 		if (ret < 0) {
 			free(buf);
@@ -138,6 +142,7 @@ int mnt_fsinfo_get_children(unsigned int id,
 	assert(mounts);
 	assert(count);
 
+	DBG(UTILS, ul_debug("fsinfo: reading children for id=%u", id));
 	*mounts = fsinfo_alloc_attrs(id, FSINFO_ATTR_MOUNT_CHILDREN, 0, &size);
 	if (!*mounts)
 		return -errno;
