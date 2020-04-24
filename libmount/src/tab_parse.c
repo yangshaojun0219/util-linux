@@ -33,6 +33,10 @@ struct libmnt_parser {
 	char	*buf;		/* buffer (the current line content) */
 	size_t	bufsiz;		/* size of the buffer */
 	size_t	line;		/* current line */
+
+	pid_t	tid;		/* task ID */
+
+	unsigned int	has_root_fs : 1;	/* root fs aread parsed */
 };
 
 static void parser_cleanup(struct libmnt_parser *pa)
@@ -665,38 +669,43 @@ done:
 }
 
 static int kernel_fs_postparse(struct libmnt_table *tb,
-			       struct libmnt_fs *fs, pid_t *tid,
-			       const char *filename)
+			       struct libmnt_fs *fs,
+			       struct libmnt_parser *pa)
 {
 	int rc = 0;
-	const char *src = mnt_fs_get_srcpath(fs);
 
 	/* This is a filesystem description from /proc, so we're in some process
 	 * namespace. Let's remember the process PID.
 	 */
-	if (filename && *tid == -1)
-		*tid = path_to_tid(filename);
+	if (pa->filename && pa->tid == 0)
+		pa->tid = path_to_tid(pa->filename);
 
-	fs->tid = *tid;
+	fs->tid = pa->tid;
 
 	/*
 	 * Convert obscure /dev/root to something more usable
 	 */
-	if (src && strcmp(src, "/dev/root") == 0) {
-		char *real = NULL;
+	if (!pa->has_root_fs) {
+		const char *src = mnt_fs_get_srcpath(fs);
 
-		rc = mnt_guess_system_root(mnt_fs_get_devno(fs), tb->cache, &real);
-		if (rc < 0)
-			return rc;
+		if (src && strcmp(src, "/dev/root") == 0) {
+			char *real = NULL;
 
-		if (rc == 0 && real) {
-			DBG(TAB, ul_debugobj(tb, "canonical root FS: %s", real));
-			rc = __mnt_fs_set_source_ptr(fs, real);
+			rc = mnt_guess_system_root(mnt_fs_get_devno(fs), tb->cache, &real);
+			if (rc < 0)
+				return rc;
 
-		} else if (rc == 1) {
-			/* mnt_guess_system_root() returns 1 if not able to convert to
-			 * the real devname; ignore this problem */
-			rc = 0;
+			if (rc == 0 && real) {
+				DBG(TAB, ul_debugobj(tb, "canonical root FS: %s", real));
+				rc = __mnt_fs_set_source_ptr(fs, real);
+
+			} else if (rc == 1) {
+				/* mnt_guess_system_root() returns 1 if not
+				 * able to convert to the real devname; ignore
+				 * this problem */
+				rc = 0;
+			}
+			pa->has_root_fs = 1;
 		}
 	}
 
@@ -704,11 +713,12 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 }
 
 #ifdef USE_LIBMOUNT_SUPPORT_FSINFO
-static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id, struct libmnt_fs *parent)
+static int table_parse_fetch_chldren(struct libmnt_table *tb,
+				     unsigned int id, struct libmnt_fs *parent,
+				     struct libmnt_parser *pa)
 {
 	struct libmnt_fs *fs = NULL;
 	struct fsinfo_mount_child *mounts = NULL;
-	pid_t tid = parent ? parent->tid : -1;
 	size_t i, count;
 	int rc = 0;
 
@@ -738,22 +748,21 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id, s
 			/* Using fsinfo() is equivalent to parsing
 			 * mountinfo.
 			 */
-			rc = kernel_fs_postparse(tb, fs, &tid,
-						 _PATH_PROC_MOUNTINFO);
+			rc = kernel_fs_postparse(tb, fs, pa);
 			if (rc) {
 				mnt_table_remove_fs(tb, fs);
 				goto done;
 			}
 
-			/* merge VFS and FS options to one string */
-			fs->optstr = mnt_fs_strdup_options(fs);
-			if (!fs->optstr) {
-				mnt_table_remove_fs(tb, fs);
-				rc = -ENOMEM;
-				goto done;
-			}
+			/* save one fsinfo() call */
+			fs->parent = parent ? parent->id : 0;
 
-			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs), fs);
+			/* we can be sure the current fs is root */
+			if (parent == NULL && i == 0)
+				pa->has_root_fs = 1;
+
+			/* recursively read children */
+			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs), fs, pa);
 			if (rc)
 				mnt_table_remove_fs(tb, fs);
 		}
@@ -781,6 +790,7 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 {
 	unsigned int id;
 	int rc;
+	struct libmnt_parser pa = { .filename = _PATH_PROC_MOUNTINFO };
 
 	DBG(TAB, ul_debugobj(tb, "fsinfo: start parsing [entries=%d, filter=%s]",
 				mnt_table_get_nents(tb), tb->fltrcb ? "yes" : "not"));
@@ -789,7 +799,7 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 	if (rc < 0)
 		goto err;
 
-	rc = table_parse_fetch_chldren(tb, id, NULL);
+	rc = table_parse_fetch_chldren(tb, id, NULL, &pa);
 	if (rc < 0)
 		goto err;
 
@@ -827,7 +837,6 @@ static int __table_parse_stream(struct libmnt_table *tb, FILE *f, const char *fi
 {
 	int rc = -1;
 	int flags = 0;
-	pid_t tid = -1;
 	struct libmnt_fs *fs = NULL;
 	struct libmnt_parser pa = { .line = 0 };
 
@@ -865,7 +874,7 @@ static int __table_parse_stream(struct libmnt_table *tb, FILE *f, const char *fi
 			fs->flags |= flags;
 
 			if (rc == 0 && tb->fmt == MNT_FMT_MOUNTINFO) {
-				rc = kernel_fs_postparse(tb, fs, &tid, filename);
+				rc = kernel_fs_postparse(tb, fs, &pa);
 				if (rc)
 					mnt_table_remove_fs(tb, fs);
 			}
