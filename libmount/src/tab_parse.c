@@ -704,11 +704,11 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 }
 
 #ifdef USE_LIBMOUNT_SUPPORT_FSINFO
-static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id)
+static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id, struct libmnt_fs *parent)
 {
 	struct libmnt_fs *fs = NULL;
 	struct fsinfo_mount_child *mounts = NULL;
-	pid_t tid = -1;
+	pid_t tid = parent ? parent->tid : -1;
 	size_t i, count;
 	int rc = 0;
 
@@ -753,7 +753,7 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id)
 				goto done;
 			}
 
-			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs));
+			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs), fs);
 			if (rc)
 				mnt_table_remove_fs(tb, fs);
 		}
@@ -789,7 +789,7 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 	if (rc < 0)
 		goto err;
 
-	rc = table_parse_fetch_chldren(tb, id);
+	rc = table_parse_fetch_chldren(tb, id, NULL);
 	if (rc < 0)
 		goto err;
 
