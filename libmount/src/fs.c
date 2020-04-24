@@ -875,7 +875,14 @@ char *mnt_fs_strdup_options(struct libmnt_fs *fs)
  */
 const char *mnt_fs_get_options(struct libmnt_fs *fs)
 {
-	return fs ? fs->optstr : NULL;
+	if (!fs)
+		return NULL;
+
+	if (!fs->optstr && mnt_fs_has_fsinfo(fs))
+		/* in on-demand mode we don't fill optstr by default */
+		fs->optstr = mnt_fs_strdup_options(fs);
+
+	return fs->optstr;
 }
 
 /**
