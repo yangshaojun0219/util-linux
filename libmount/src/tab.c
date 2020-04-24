@@ -453,8 +453,9 @@ int mnt_table_add_fs(struct libmnt_table *tb, struct libmnt_fs *fs)
 	fs->tab = tb;
 	tb->nents++;
 
-	DBG(TAB, ul_debugobj(tb, "add entry: %s %s",
-			mnt_fs_get_source(fs), mnt_fs_get_target(fs)));
+	/* don't use mnt_fs_get_() in debug to avoid fsinfo() calls in on-emand
+	 * mode */
+	DBG(TAB, ul_debugobj(tb, "add entry: %s %s", fs->source, fs->target));
 	return 0;
 }
 
