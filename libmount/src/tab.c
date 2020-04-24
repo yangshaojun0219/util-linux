@@ -1974,6 +1974,39 @@ done:
 	return rc;
 }
 
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+static int test_fsinfo(struct libmnt_test *ts, int argc, char *argv[])
+{
+	struct libmnt_table *tb = NULL;
+	struct libmnt_iter *itr = NULL;
+	struct libmnt_fs *fs;
+	int rc = 0;
+
+	tb = mnt_new_table();
+	if (!tb)
+		return -ENOMEM;
+
+	mnt_table_set_parser_errcb(tb, parser_errcb);
+
+	rc = mnt_table_parse_fsinfo(tb);
+	if (rc) {
+		fprintf(stderr, "fsinfo parsing failed\n");
+		goto done;
+	}
+
+	itr = mnt_new_iter(MNT_ITER_FORWARD);
+	if (!itr)
+		goto done;
+
+	while(mnt_table_next_fs(tb, itr, &fs) == 0)
+		mnt_fs_print_debug(fs, stdout);
+done:
+	mnt_free_iter(itr);
+	mnt_unref_table(tb);
+	return rc;
+}
+#endif
+
 static int test_find_idx(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_table *tb;
@@ -2229,6 +2262,9 @@ int main(int argc, char *argv[])
 	{ "--find-mountpoint", test_find_mountpoint, "<path>" },
 	{ "--copy-fs",       test_copy_fs, "<file>  copy root FS from the file" },
 	{ "--is-mounted",    test_is_mounted, "<fstab> check what from fstab is already mounted" },
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+	{ "--fsinfo",        test_fsinfo,   "read mount table by fsinfo syscall"},
+#endif
 	{ NULL }
 	};
 

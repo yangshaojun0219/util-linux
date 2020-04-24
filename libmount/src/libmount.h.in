@@ -531,6 +531,7 @@ extern struct libmnt_table *mnt_new_table_from_dir(const char *dirname)
 			__ul_attribute__((warn_unused_result));
 extern int mnt_table_parse_stream(struct libmnt_table *tb, FILE *f,
 				  const char *filename);
+extern int mnt_table_parse_fsinfo(struct libmnt_table *tb);
 extern int mnt_table_parse_file(struct libmnt_table *tb, const char *filename);
 extern int mnt_table_parse_dir(struct libmnt_table *tb, const char *dirname);
 

@@ -38,12 +38,11 @@ int mnt_get_target_id(const char *path, unsigned int *id, unsigned int flags)
 		.request	= FSINFO_ATTR_MOUNT_INFO,
 		.at_flags	= flags,
 	};
-	int rc;
+	int rc = 0;
 
 	errno = 0;
-	rc = fsinfo(AT_FDCWD, path,
-		    &params, sizeof(params), &info, sizeof(info));
-	if (rc == -1)
+	if (fsinfo(AT_FDCWD, path,
+		    &params, sizeof(params), &info, sizeof(info)) < 0)
 		rc = -errno;
 	else
 		*id = info.mnt_id;
@@ -69,7 +68,7 @@ int mnt_fsinfo(const char *query,
 
 	DBG(UTILS, ul_debug("fsinfo(2) [query=%s, request=0x%02x, flags=0x%02x, at_flags=0x%02x]",
 				query, params->request, params->flags, params->at_flags));
-
+	errno = 0;
 	res = fsinfo(AT_FDCWD, query, params, params_size, buf, *bufsz);
 	if (res < 0)
 		rc = -errno;
@@ -85,6 +84,67 @@ int mnt_fsinfo(const char *query,
 	return rc;
 }
 
+static void *fsinfo_alloc_attrs(unsigned int id,
+				unsigned int attr, unsigned int Nth,
+				size_t *size)
+{
+	char idstr[sizeof(stringify_value(UINT_MAX))];
+	struct fsinfo_params params = {
+		.flags		= FSINFO_FLAGS_QUERY_MOUNT,
+		.request	= attr,
+		.Nth		= Nth,
+	};
+	size_t bufsz = BUFSIZ;
+	void *buf = NULL;
+
+	snprintf(idstr, sizeof(idstr), "%u", id);
+
+	errno = 0;
+	for (;;) {
+		ssize_t ret;
+		void *tmp;
+
+		tmp = realloc(buf, bufsz);
+		if (!tmp) {
+			free(buf);
+			break;
+		}
+		buf = tmp;
+
+		ret = fsinfo(AT_FDCWD, idstr, &params, sizeof(params), buf, bufsz);
+		if (ret < 0) {
+			free(buf);
+			break;
+		}
+
+		if ((size_t) ret <= bufsz) {
+			*size = (size_t) ret;
+			return buf;		/* sucess */
+		}
+		bufsz = (ret + BUFSIZ - 1) & ~(BUFSIZ - 1);
+	}
+
+	return NULL;	/* error */
+}
+
+/* Returns: 0 on success, <0 on error */
+int mnt_fsinfo_get_children(unsigned int id,
+			    struct fsinfo_mount_child **mounts,
+			    size_t *count)
+{
+	size_t size = 0;
+
+	assert(id);
+	assert(mounts);
+	assert(count);
+
+	*mounts = fsinfo_alloc_attrs(id, FSINFO_ATTR_MOUNT_CHILDREN, 0, &size);
+	if (!*mounts)
+		return -errno;
+
+	*count = size / sizeof((*mounts)[0]) - 1;
+	return 0;
+}
 
 #endif /* USE_LIBMOUNT_SUPPORT_FSINFO */
 

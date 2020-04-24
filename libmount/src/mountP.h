@@ -439,6 +439,9 @@ extern int mnt_fsinfo(const char *query,
                size_t params_size,
                char *buf,
                size_t *bufsz);
+extern int mnt_fsinfo_get_children(unsigned int id,
+                            struct fsinfo_mount_child **mounts,
+                            size_t *count);
 #endif
 
 /* context.c */

@@ -685,7 +685,7 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 	if (src && strcmp(src, "/dev/root") == 0) {
 		char *real = NULL;
 
-		rc = mnt_guess_system_root(fs->devno, tb->cache, &real);
+		rc = mnt_guess_system_root(mnt_fs_get_devno(fs), tb->cache, &real);
 		if (rc < 0)
 			return rc;
 
@@ -700,6 +700,126 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 		}
 	}
 
+	return rc;
+}
+
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+static int table_parse_fetch_chldren(struct libmnt_table *tb, unsigned int id)
+{
+	struct libmnt_fs *fs = NULL;
+	struct fsinfo_mount_child *mounts = NULL;
+	pid_t tid = -1;
+	size_t i, count;
+	int rc = 0;
+
+	rc = mnt_fsinfo_get_children(id, &mounts, &count);
+	if (rc != 0)
+		goto out;
+	if (!count)
+		goto out;
+
+	for (i = 0; i < count; i++) {
+		if (!fs) {
+			fs = mnt_new_fs();
+			if (!fs) {
+				rc = -ENOMEM;
+				goto out;
+			}
+		}
+		fs->id = mounts[i].mnt_id;
+
+		mnt_fs_enable_fsinfo(fs, 1);
+
+		if (!rc && tb->fltrcb && tb->fltrcb(fs, tb->fltrcb_data))
+			rc = 1;	/* filtered out by callback... */
+		if (!rc)
+			rc = mnt_table_add_fs(tb, fs);
+		if (!rc) {
+			/* Using fsinfo() is equivalent to parsing
+			 * mountinfo.
+			 */
+			rc = kernel_fs_postparse(tb, fs, &tid,
+						 _PATH_PROC_MOUNTINFO);
+			if (rc) {
+				mnt_table_remove_fs(tb, fs);
+				goto done;
+			}
+
+			/* merge VFS and FS options to one string */
+			fs->optstr = mnt_fs_strdup_options(fs);
+			if (!fs->optstr) {
+				mnt_table_remove_fs(tb, fs);
+				rc = -ENOMEM;
+				goto done;
+			}
+
+			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs));
+			if (rc)
+				mnt_table_remove_fs(tb, fs);
+		}
+done:
+		if (rc) {
+			if (rc > 0) {
+				mnt_reset_fs(fs);
+				assert(fs->refcount == 1);
+				continue;	/* recoverable error, reuse fs*/
+			}
+
+			mnt_unref_fs(fs);
+			goto out;		/* fatal error */
+		}
+
+		mnt_unref_fs(fs);
+		fs = NULL;
+	}
+out:
+	free(mounts);
+	return rc;
+}
+
+static int __table_parse_fsinfo(struct libmnt_table *tb)
+{
+	unsigned int id;
+	int rc;
+
+	DBG(TAB, ul_debugobj(tb, "fsinfo: start parsing [entries=%d, filter=%s]",
+				mnt_table_get_nents(tb), tb->fltrcb ? "yes" : "not"));
+
+	rc = mnt_get_target_id("/", &id, AT_NO_AUTOMOUNT);
+	if (rc < 0)
+		goto err;
+
+	rc = table_parse_fetch_chldren(tb, id);
+	if (rc < 0)
+		goto err;
+
+	DBG(TAB, ul_debugobj(tb, "fsinfo: stop parsing (%d entries)",
+				mnt_table_get_nents(tb)));
+	return 0;
+err:
+	DBG(TAB, ul_debugobj(tb, "fsinfo: error (rc=%d)", rc));
+	return rc;
+}
+#endif /* USE_LIBMOUNT_SUPPORT_FSINFO */
+
+/**
+ * mnt_table_parse_fsinfo:
+ * @tb: libmnt_table instance
+ *
+ * Read mount table by fsinfo() kernel interface. Note that all filesystems in the
+ * table have enabled on-demand fsinfo().
+ *
+ * Returns: 0 on success, negative number in case of error.
+ */
+int mnt_table_parse_fsinfo(struct libmnt_table *tb)
+{
+	int rc = -ENOSYS;
+
+	assert(tb);
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
+	if (mnt_has_fsinfo())
+		rc = __table_parse_fsinfo(tb);
+#endif
 	return rc;
 }
 
