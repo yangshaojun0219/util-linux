@@ -1813,19 +1813,19 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs,
 	switch (request) {
 	case FSINFO_ATTR_SOURCE:
 		buf[len] = '\0';
-		rc = mnt_fs_set_source(fs, buf);
+		rc = mnt_fs_set_source(fs, *buf ? buf : NULL);
 		break;
 	case FSINFO_ATTR_CONFIGURATION:
 		buf[len] = '\0';
-		rc = strdup_to_struct_member(fs, fs_optstr, buf);
+		rc = strdup_to_struct_member(fs, fs_optstr, *buf ? buf : NULL);
 		break;
 	case FSINFO_ATTR_MOUNT_PATH:
 		buf[len] = '\0';
-		rc = strdup_to_struct_member(fs, root, buf);
+		rc = strdup_to_struct_member(fs, root, *buf ? buf : NULL);
 		break;
 	case FSINFO_ATTR_MOUNT_POINT_FULL:
 		buf[len] = '\0';
-		rc = strdup_to_struct_member(fs, target, buf);
+		rc = strdup_to_struct_member(fs, target, *buf ? buf : NULL);
 		break;
 	case FSINFO_ATTR_IDS:
 	{
