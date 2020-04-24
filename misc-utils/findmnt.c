@@ -1623,7 +1623,7 @@ int main(int argc, char *argv[])
 		}
 		mnt_table_set_cache(tb, cache);
 
-		if (tabtype != TABTYPE_KERNEL || tabtype != TABTYPE_FSINFO)
+		if (tabtype != TABTYPE_KERNEL && tabtype != TABTYPE_FSINFO)
 			cache_set_targets(cache);
 	}
 
