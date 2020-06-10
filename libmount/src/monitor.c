@@ -45,18 +45,26 @@
 
 struct monitor_opers;
 
+/*
+ * The libmount supports multiple ways (channels) how to monitor mount table
+ * changes -- each way is represented by one mount monitor entry.
+ */
 struct monitor_entry {
 	int			fd;		/* private entry file descriptor */
 	char			*path;		/* path to the monitored file */
 	int			type;		/* MNT_MONITOR_TYPE_* */
 	uint32_t		events;		/* wanted epoll events */
 
+	char			*buf;		/* buffer to read from kernel */
+	size_t			bufsz;		/* buffer size */
+	ssize_t			bufrsz;		/* last read() size */
+
 	const struct monitor_opers *opers;
 
 	unsigned int		enable : 1,
-				changed : 1;
+				changed : 1;	/* change detected */
 
-	struct list_head	ents;
+	struct list_head	ents;		/* libmnt_monitor->ents list item */
 };
 
 struct libmnt_monitor {
@@ -117,6 +125,7 @@ static void free_monitor_entry(struct monitor_entry *me)
 	if (me->fd >= 0)
 		close(me->fd);
 	free(me->path);
+	free(me->buf);
 	free(me);
 }
 
@@ -146,7 +155,7 @@ void mnt_unref_monitor(struct libmnt_monitor *mn)
 	}
 }
 
-static struct monitor_entry *monitor_new_entry(struct libmnt_monitor *mn)
+static struct monitor_entry *monitor_new_entry(struct libmnt_monitor *mn, size_t bufsz)
 {
 	struct monitor_entry *me;
 
@@ -159,6 +168,15 @@ static struct monitor_entry *monitor_new_entry(struct libmnt_monitor *mn)
 	list_add_tail(&me->ents, &mn->ents);
 
 	me->fd = -1;
+	me->bufsz = bufsz;
+
+	if (me->bufsz) {
+		me->buf = malloc(bufsz);
+		if (!me->buf) {
+			free(me);
+			return NULL;
+		}
+	}
 
 	return me;
 }
@@ -309,7 +327,6 @@ err:
 static int userspace_event_verify(struct libmnt_monitor *mn,
 					struct monitor_entry *me)
 {
-	char buf[sizeof(struct inotify_event) + NAME_MAX + 1];
 	int status = 0;
 
 	if (!me || me->fd < 0)
@@ -319,15 +336,14 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 
 	/* the me->fd is non-blocking */
 	do {
-		ssize_t len;
 		char *p;
 		const struct inotify_event *e;
 
-		len = read(me->fd, buf, sizeof(buf));
-		if (len < 0)
+		me->bufrsz = read(me->fd, me->buf, me->bufsz);
+		if (me->bufrsz < 0)
 			break;
 
-		for (p = buf; p < buf + len;
+		for (p = me->buf; p < me->buf + me->bufrsz;
 		     p += sizeof(struct inotify_event) + e->len) {
 
 			int fd = -1;
@@ -410,7 +426,7 @@ int mnt_monitor_enable_userspace(struct libmnt_monitor *mn, int enable, const ch
 		return -EINVAL;
 	}
 
-	me = monitor_new_entry(mn);
+	me = monitor_new_entry(mn, sizeof(struct inotify_event) + NAME_MAX + 1);
 	if (!me)
 		goto err;
 
@@ -511,7 +527,7 @@ int mnt_monitor_enable_kernel(struct libmnt_monitor *mn, int enable)
 	DBG(MONITOR, ul_debugobj(mn, "allocate new kernel monitor"));
 
 	/* create a new entry */
-	me = monitor_new_entry(mn);
+	me = monitor_new_entry(mn, 0);
 	if (!me)
 		goto err;
 
