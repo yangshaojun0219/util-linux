@@ -712,6 +712,7 @@ static int kernel_fs_postparse(struct libmnt_table *tb,
 	return rc;
 }
 
+#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 static int parse_fsinfo_init_fs(
 			struct libmnt_table *tb,
 			struct libmnt_fs *fs,
@@ -734,8 +735,6 @@ static int parse_fsinfo_init_fs(
 	return rc;
 }
 
-
-#ifdef USE_LIBMOUNT_SUPPORT_FSINFO
 static int table_parse_fetch_chldren(struct libmnt_table *tb,
 				     unsigned int id, struct libmnt_fs *parent,
 				     struct libmnt_parser *pa)
