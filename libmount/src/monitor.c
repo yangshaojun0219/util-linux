@@ -268,6 +268,9 @@ static int userspace_add_watch(struct monitor_entry *me, int *final, int *fd)
 		goto done;
 	}
 
+	/* If the lock file does not exist yet, then watch the first
+	 * avalable parental directory.
+	 */
 	while (strchr(filename, '/')) {
 		stripoff_last_component(filename);
 		if (!*filename)
@@ -330,6 +333,7 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 					struct monitor_entry *me)
 {
 	int status = 0;
+	int last_removed = -1;
 
 	if (!me || me->fd < 0)
 		return 0;
@@ -361,9 +365,18 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 				/* event on lock file */
 				userspace_add_watch(me, &status, &fd);
 
-				if (fd != e->wd) {
+				if (fd != e->wd && e->wd != last_removed) {
+					/*
+					 * If the new watch (fd) is diffrent than already used e->wd
+					 * than remove old watch. This is necessary for example when
+					 * we move watch from /run/mount to /run/mount/utab/lock.
+					 *
+					 * The directory watch usually generates more events,
+					 * call inotify_rm_watch() only first time.
+					 */
 					DBG(MONITOR, ul_debugobj(me, " removing watch [fd=%d]", e->wd));
 					inotify_rm_watch(me->fd, e->wd);
+					last_removed = e->wd;
 				}
 			}
 		}
