@@ -61,7 +61,7 @@ struct monitor_entry {
 
 	const struct monitor_opers *opers;
 
-	unsigned int		enable : 1,
+	unsigned int		enabled : 1,
 				changed : 1;	/* change detected */
 
 	struct list_head	ents;		/* libmnt_monitor->ents list item */
@@ -300,7 +300,7 @@ static int userspace_monitor_get_fd(struct libmnt_monitor *mn __attribute__((__u
 {
 	int rc;
 
-	if (!me || me->enable == 0)	/* not-initialized or disabled */
+	if (!me || me->enabled == 0)	/* not-initialized or disabled */
 		return -EINVAL;
 	if (me->fd >= 0)
 		return me->fd;		/* already initialized */
@@ -483,7 +483,7 @@ static int kernel_monitor_get_fd(struct libmnt_monitor *mn,
 {
 	int rc;
 
-	if (!me || me->enable == 0)	/* not-initialized or disabled */
+	if (!me || me->enabled == 0)	/* not-initialized or disabled */
 		return -EINVAL;
 	if (me->fd >= 0)
 		return me->fd;		/* already initialized */
@@ -585,7 +585,7 @@ static int monitor_modify_epoll(struct libmnt_monitor *mn,
 	assert(mn);
 	assert(me);
 
-	me->enable = enable ? 1 : 0;
+	me->enabled = enable ? 1 : 0;
 	me->changed = 0;
 
 	if (mn->fd < 0)
@@ -696,7 +696,7 @@ int mnt_monitor_get_fd(struct libmnt_monitor *mn)
 
 	DBG(MONITOR, ul_debugobj(mn, " adding entries to epoll [epoll fd=%d]", mn->fd));
 	while (monitor_next_entry(mn, &itr, &me) == 0) {
-		if (!me->enable)
+		if (!me->enabled)
 			continue;
 		rc = monitor_modify_epoll(mn, me, TRUE);
 		if (rc)
