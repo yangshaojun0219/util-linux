@@ -178,6 +178,7 @@ static struct monitor_entry *monitor_new_entry(struct libmnt_monitor *mn, size_t
 		}
 	}
 
+	DBG(MONITOR, ul_debugobj(me, "alloc entry"));
 	return me;
 }
 
@@ -255,7 +256,7 @@ static int userspace_add_watch(struct monitor_entry *me, int *final, int *fd)
 	errno = 0;
 	wd = inotify_add_watch(me->fd, filename, IN_CLOSE_NOWRITE);
 	if (wd >= 0) {
-		DBG(MONITOR, ul_debug(" added inotify watch for %s [fd=%d]", filename, wd));
+		DBG(MONITOR, ul_debugobj(me, "  added lock inotify-watch [%s, fd=%d]", filename, wd));
 		rc = 0;
 		if (final)
 			*final = 1;
@@ -276,7 +277,7 @@ static int userspace_add_watch(struct monitor_entry *me, int *final, int *fd)
 		errno = 0;
 		wd = inotify_add_watch(me->fd, filename, IN_CREATE|IN_ISDIR);
 		if (wd >= 0) {
-			DBG(MONITOR, ul_debug(" added inotify watch for %s [fd=%d]", filename, wd));
+			DBG(MONITOR, ul_debugobj(me, "  added dir inotify-watch [%s, fd=%d]", filename, wd));
 			rc = 0;
 			if (fd)
 				*fd = wd;
@@ -291,7 +292,7 @@ done:
 	return rc;
 }
 
-static int userspace_monitor_get_fd(struct libmnt_monitor *mn,
+static int userspace_monitor_get_fd(struct libmnt_monitor *mn __attribute__((__unused__)),
 				    struct monitor_entry *me)
 {
 	int rc;
@@ -302,7 +303,6 @@ static int userspace_monitor_get_fd(struct libmnt_monitor *mn,
 		return me->fd;		/* already initialized */
 
 	assert(me->path);
-	DBG(MONITOR, ul_debugobj(mn, " open userspace monitor for %s", me->path));
 
 	me->fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
 	if (me->fd < 0)
@@ -311,13 +311,15 @@ static int userspace_monitor_get_fd(struct libmnt_monitor *mn,
 	if (userspace_add_watch(me, NULL, NULL) < 0)
 		goto err;
 
+	DBG(MONITOR, ul_debugobj(me, " new userspace monitor [%s, inotify fd=%d]",
+				me->path, me->fd));
 	return me->fd;
 err:
 	rc = -errno;
 	if (me->fd >= 0)
 		close(me->fd);
 	me->fd = -1;
-	DBG(MONITOR, ul_debugobj(mn, "failed to create userspace monitor [rc=%d]", rc));
+	DBG(MONITOR, ul_debugobj(me, "failed to create userspace monitor [rc=%d]", rc));
 	return rc;
 }
 
@@ -332,13 +334,14 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 	if (!me || me->fd < 0)
 		return 0;
 
-	DBG(MONITOR, ul_debugobj(mn, "drain and verify userspace monitor inotify"));
+	DBG(MONITOR, ul_debugobj(me, "drain/verify userspace monitor"));
 
 	/* the me->fd is non-blocking */
 	do {
 		char *p;
 		const struct inotify_event *e;
 
+		DBG(MONITOR, ul_debugobj(me, " reading inotify events"));
 		me->bufrsz = read(me->fd, me->buf, me->bufsz);
 		if (me->bufrsz < 0)
 			break;
@@ -349,7 +352,8 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 			int fd = -1;
 
 			e = (const struct inotify_event *) p;
-			DBG(MONITOR, ul_debugobj(mn, " inotify event 0x%x [%s]\n", e->mask, e->len ? e->name : ""));
+			DBG(MONITOR, ul_debugobj(me, "  inotify event 0x%p [mask=0x%x, name=%s]\n",
+						e, e->mask, e->len ? e->name : ""));
 
 			if (e->mask & IN_CLOSE_NOWRITE)
 				status = 1;
@@ -358,7 +362,7 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 				userspace_add_watch(me, &status, &fd);
 
 				if (fd != e->wd) {
-					DBG(MONITOR, ul_debugobj(mn, " removing watch [fd=%d]", e->wd));
+					DBG(MONITOR, ul_debugobj(me, " removing watch [fd=%d]", e->wd));
 					inotify_rm_watch(me->fd, e->wd);
 				}
 			}
@@ -581,7 +585,7 @@ static int monitor_modify_epoll(struct libmnt_monitor *mn,
 		if (fd < 0)
 			goto err;
 
-		DBG(MONITOR, ul_debugobj(mn, " add fd=%d (for %s)", fd, me->path));
+		DBG(MONITOR, ul_debugobj(mn, " add to epoll [%s, fd=%d]", me->path, fd));
 
 		ev.data.ptr = (void *) me;
 
@@ -595,7 +599,7 @@ static int monitor_modify_epoll(struct libmnt_monitor *mn,
 			while (epoll_wait(mn->fd, events, 1, 0) > 0);
 		}
 	} else if (me->fd) {
-		DBG(MONITOR, ul_debugobj(mn, " remove fd=%d (for %s)", me->fd, me->path));
+		DBG(MONITOR, ul_debugobj(mn, " remove from epoll [%s, fd=%d]", me->path, me->fd));
 		if (epoll_ctl(mn->fd, EPOLL_CTL_DEL, me->fd, NULL) < 0) {
 			if (errno != ENOENT)
 				goto err;
@@ -642,7 +646,7 @@ int mnt_monitor_close_fd(struct libmnt_monitor *mn)
 	}
 
 	if (mn->fd >= 0) {
-		DBG(MONITOR, ul_debugobj(mn, "closing top-level monitor fd"));
+		DBG(MONITOR, ul_debugobj(mn, "closing top-level epoll"));
 		close(mn->fd);
 	}
 	mn->fd = -1;
@@ -670,14 +674,14 @@ int mnt_monitor_get_fd(struct libmnt_monitor *mn)
 	if (mn->fd >= 0)
 		return mn->fd;
 
-	DBG(MONITOR, ul_debugobj(mn, "create top-level monitor fd"));
+	DBG(MONITOR, ul_debugobj(mn, "creating top-level epoll"));
 	mn->fd = epoll_create1(EPOLL_CLOEXEC);
 	if (mn->fd < 0)
 		return -errno;
 
 	mnt_reset_iter(&itr, MNT_ITER_FORWARD);
 
-	DBG(MONITOR, ul_debugobj(mn, "adding monitor entries to epoll (fd=%d)", mn->fd));
+	DBG(MONITOR, ul_debugobj(mn, " adding entries to epoll [epoll fd=%d]", mn->fd));
 	while (monitor_next_entry(mn, &itr, &me) == 0) {
 		if (!me->enable)
 			continue;
@@ -686,13 +690,13 @@ int mnt_monitor_get_fd(struct libmnt_monitor *mn)
 			goto err;
 	}
 
-	DBG(MONITOR, ul_debugobj(mn, "successfully created monitor"));
+	DBG(MONITOR, ul_debugobj(mn, " epoll created"));
 	return mn->fd;
 err:
 	rc = errno ? -errno : -EINVAL;
 	close(mn->fd);
 	mn->fd = -1;
-	DBG(MONITOR, ul_debugobj(mn, "failed to create monitor [rc=%d]", rc));
+	DBG(MONITOR, ul_debugobj(mn, "create epoll failed [rc=%d]", rc));
 	return rc;
 }
 
