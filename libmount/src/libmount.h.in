@@ -681,6 +681,9 @@ extern int mnt_monitor_next_change(struct libmnt_monitor *mn,
 			     const char **filename, int *type);
 extern int mnt_monitor_event_cleanup(struct libmnt_monitor *mn);
 
+extern int mnt_monitor_keep_data(struct libmnt_monitor *mn, int type, int enable);
+extern void *mnt_monitor_event_data(struct libmnt_monitor *mn, int type, ssize_t *bufsz);
+
 
 /* context.c */
 

@@ -62,6 +62,7 @@ struct monitor_entry {
 	const struct monitor_opers *opers;
 
 	unsigned int		enabled : 1,
+				keep_data : 1,	/* return read() buffer to caller */
 				changed : 1;	/* change detected */
 
 	struct list_head	ents;		/* libmnt_monitor->ents list item */
@@ -77,7 +78,7 @@ struct libmnt_monitor {
 struct monitor_opers {
 	int (*op_get_fd)(struct libmnt_monitor *, struct monitor_entry *);
 	int (*op_close_fd)(struct libmnt_monitor *, struct monitor_entry *);
-	int (*op_event_verify)(struct libmnt_monitor *, struct monitor_entry *);
+	int (*op_event_read)(struct libmnt_monitor *, struct monitor_entry *);
 };
 
 static int monitor_modify_epoll(struct libmnt_monitor *mn,
@@ -329,7 +330,7 @@ err:
 /*
  * verify and drain inotify buffer
  */
-static int userspace_event_verify(struct libmnt_monitor *mn,
+static int userspace_monitor_read(struct libmnt_monitor *mn,
 					struct monitor_entry *me)
 {
 	int status = 0;
@@ -347,7 +348,7 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 
 		DBG(MONITOR, ul_debugobj(me, " reading inotify events"));
 		me->bufrsz = read(me->fd, me->buf, me->bufsz);
-		if (me->bufrsz < 0)
+		if (me->bufrsz <= 0)
 			break;
 
 		for (p = me->buf; p < me->buf + me->bufrsz;
@@ -380,6 +381,9 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
 				}
 			}
 		}
+
+		if (status == 1 && me->keep_data)
+			break;
 	} while (1);
 
 	DBG(MONITOR, ul_debugobj(mn, "%s", status == 1 ? " success" : " nothing"));
@@ -390,9 +394,9 @@ static int userspace_event_verify(struct libmnt_monitor *mn,
  * userspace monitor operations
  */
 static const struct monitor_opers userspace_opers = {
-	.op_get_fd		= userspace_monitor_get_fd,
-	.op_close_fd		= userspace_monitor_close_fd,
-	.op_event_verify	= userspace_event_verify
+	.op_get_fd	= userspace_monitor_get_fd,
+	.op_close_fd	= userspace_monitor_close_fd,
+	.op_event_read	= userspace_monitor_read
 };
 
 /**
@@ -401,7 +405,7 @@ static const struct monitor_opers userspace_opers = {
  * @enable: 0 or 1
  * @filename: overwrites default
  *
- * Enables or disables userspace monitoring. If the userspace monitor does not
+ * Enables or disables userspace mount table monitoring. If the userspace monitor does not
  * exist and enable=1 then allocates new resources necessary for the monitor.
  *
  * If the top-level monitor has been already created (by mnt_monitor_get_fd()
@@ -409,10 +413,14 @@ static const struct monitor_opers userspace_opers = {
  *
  * The @filename is used only the first time when you enable the monitor. It's
  * impossible to have more than one userspace monitor. The recommended is to
- * use NULL as filename.
+ * use NULL as @filename.
  *
  * The userspace monitor is unsupported for systems with classic regular
  * /etc/mtab file.
+ *
+ * This monitor type is able to return inotify event data (as read() from
+ * kernel), but it's disabled by default as it does not provide any details
+ * about changed filesystems. See mnt_monitor_keep_data() for more details.
  *
  * Return: 0 on success and <0 on error
  */
@@ -751,8 +759,8 @@ int mnt_monitor_wait(struct libmnt_monitor *mn, int timeout)
 		if (!me)
 			return -EINVAL;
 
-		if (me->opers->op_event_verify == NULL ||
-		    me->opers->op_event_verify(mn, me) == 1) {
+		if (me->opers->op_event_read == NULL ||
+		    me->opers->op_event_read(mn, me) == 1) {
 			me->changed = 1;
 			break;
 		}
@@ -775,6 +783,7 @@ static struct monitor_entry *get_changed(struct libmnt_monitor *mn)
 	return NULL;
 }
 
+
 /**
  * mnt_monitor_next_change:
  * @mn: monitor
@@ -787,8 +796,8 @@ static struct monitor_entry *get_changed(struct libmnt_monitor *mn)
  * Returns: 0 on success, 1 no change, <0 on error
  */
 int mnt_monitor_next_change(struct libmnt_monitor *mn,
-			     const char **filename,
-			     int *type)
+			    const char **filename,
+			    int *type)
 {
 	int rc;
 	struct monitor_entry *me;
@@ -822,8 +831,8 @@ int mnt_monitor_next_change(struct libmnt_monitor *mn,
 		if (!me)
 			return -EINVAL;
 
-		if (me->opers->op_event_verify != NULL &&
-		    me->opers->op_event_verify(mn, me) != 1)
+		if (me->opers->op_event_read != NULL &&
+		    me->opers->op_event_read(mn, me) != 1)
 			me = NULL;
 	}
 
@@ -856,6 +865,71 @@ int mnt_monitor_event_cleanup(struct libmnt_monitor *mn)
 
 	while ((rc = mnt_monitor_next_change(mn, NULL, NULL)) == 0);
 	return rc < 0 ? rc : 0;
+}
+
+/**
+ * mnt_monitor_event_data:
+ * @mn: monitor
+ * @type: wanted MNT_MONITOR_TYPE_* as returned by mnt_monitor_next_change()
+ * @bufsz: returns size of the buffer
+ *
+ * The event data are not maintained by libmount and API/ABI does not guarantee
+ * backward compatibility. Every monitor type returns different data or NULL
+ * (MNT_MONITOR_TYPE_KERNEL does not provide any data).
+ *
+ * Returns: data read from kernel for the last event or NULL
+ */
+void *mnt_monitor_event_data(struct libmnt_monitor *mn, int type, ssize_t *bufsz)
+{
+	struct libmnt_iter itr;
+	struct monitor_entry *me;
+
+	if (!mn || mn->fd < 0)
+		return NULL;;
+
+	mnt_reset_iter(&itr, MNT_ITER_FORWARD);
+	while (monitor_next_entry(mn, &itr, &me) == 0) {
+		if (me->type == type) {
+			if (bufsz)
+				*bufsz = me->bufrsz;	/* read() return */
+			if (me->bufrsz > 0)
+				return me->buf;
+			break;
+		}
+	}
+	return NULL;
+}
+
+
+/**
+ * mnt_monitor_keep_data:
+ * @mn: monitor
+ * @type: MNT_MONITOR_TYPE_*
+ * @enable: 1 or 0
+ *
+ * Forces monitor to keep event data in memory and do not overwrite it until
+ * not requested by caller (usually by next mnt_monitor_next_change() or
+ * mnt_monitor_event_cleanup()).
+ *
+ * Returns: 0 on success, <0 on error.
+ */
+int mnt_monitor_keep_data(struct libmnt_monitor *mn, int type, int enable)
+{
+	struct libmnt_iter itr;
+	struct monitor_entry *me;
+
+	if (!mn)
+		return -EINVAL;
+
+	mnt_reset_iter(&itr, MNT_ITER_FORWARD);
+	while (monitor_next_entry(mn, &itr, &me) == 0) {
+		if (me->type == type) {
+			me->keep_data = enable;
+			return 0;
+		}
+	}
+
+	return -EINVAL;
 }
 
 #ifdef TEST_PROGRAM
@@ -996,12 +1070,64 @@ static int test_wait(struct libmnt_test *ts, int argc, char *argv[])
 	return 0;
 }
 
+/*
+ * create a monitor, wait for a change and use data
+ */
+static int test_data(struct libmnt_test *ts, int argc, char *argv[])
+{
+	const char *filename;
+	struct libmnt_monitor *mn = create_test_monitor(argc, argv);
+
+	if (!mn)
+		return -1;
+
+	mnt_monitor_keep_data(mn, MNT_MONITOR_TYPE_USERSPACE, 1);
+
+	printf("waiting for changes...\n");
+	while (mnt_monitor_wait(mn, -1) > 0) {
+		int type = 0;
+
+		printf("notification detected\n");
+
+		while (mnt_monitor_next_change(mn, &filename, &type) == 0) {
+			char *data, *p;
+			ssize_t sz;
+			size_t chunksz = 0;
+
+			printf(" %s: change detected\n", filename);
+
+			switch (type) {
+
+			case MNT_MONITOR_TYPE_KERNEL: /* no data, jusr epoll */
+				break;
+
+			case MNT_MONITOR_TYPE_USERSPACE: /* inotify */
+				data = mnt_monitor_event_data(mn, type, &sz);
+				for (p = data; p && p < data + sz;
+				     p += sizeof(struct inotify_event) + chunksz) {
+					struct inotify_event *e =
+							(struct inotify_event *) p;
+
+					printf("  inotify event mask=0x%x, name=%s\n",
+						e->mask, e->len ? e->name : "");
+
+					chunksz = e->len;
+				}
+				break;
+			}
+		}
+	}
+	mnt_unref_monitor(mn);
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	struct libmnt_test tss[] = {
 		{ "--epoll", test_epoll, "<userspace kernel ...>  monitor in epoll" },
 		{ "--epoll-clean", test_epoll_cleanup, "<userspace kernel ...>  monitor in epoll and clean events" },
 		{ "--wait",  test_wait,  "<userspace kernel ...>  monitor wait function" },
+		{ "--data",  test_data,  "<userspace kernel ...>  notification kernel data" },
 		{ NULL }
 	};
 
