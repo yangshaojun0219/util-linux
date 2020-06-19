@@ -253,6 +253,7 @@ AC_CHECK_HEADERS([ \
 	linux/securebits.h \
 	linux/net_namespace.h \
 	linux/capability.h \
+	linux/watch_queue.h \
 	locale.h \
 	mntent.h \
 	net/if.h \
@@ -391,6 +392,7 @@ have_linux_version_h=$ac_cv_header_linux_version_h
 have_linux_blkzoned_h=$ac_cv_header_linux_blkzoned_h
 have_linux_btrfs_h=$ac_cv_header_linux_btrfs_h
 have_linux_fsinfo_h=$ac_cv_header_linux_fsinfo_h
+have_linux_watch_queue_h=$ac_cv_header_linux_watch_queue_h
 have_linux_raw_h=$ac_cv_header_linux_raw_h
 have_linux_securebits_h=$ac_cv_header_linux_securebits_h
 have_linux_capability_h=$ac_cv_header_linux_capability_h
@@ -524,6 +526,7 @@ AC_CHECK_FUNCS([ \
 	vwarnx \
 	warn \
 	warnx \
+	watch_mount \
 ])
 AC_FUNC_FSEEKO
 
@@ -1138,6 +1141,11 @@ AS_IF([test "x$build_libmount" = xyes], [
     AC_DEFINE([USE_LIBMOUNT_SUPPORT_FSINFO], [1], [Define to 1 if want to support fsinfo.])
   ],[
     AC_MSG_WARN([libmount will be compiled without fsinfo support])
+  ])
+  AS_IF([test "x$have_linux_watch_queue_h" = "xyes"], [
+    AC_DEFINE([USE_LIBMOUNT_SUPPORT_WATCHQUEUE], [1], [Define to 1 if want to support watch-queue.])
+  ],[
+    AC_MSG_WARN([libmount will be compiled without watch-queue support])
   ])
 ])
 

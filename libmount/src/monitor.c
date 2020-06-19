@@ -35,12 +35,19 @@
  *
  */
 
-#include "fileutils.h"
 #include "mountP.h"
 #include "pathnames.h"
+#include "fileutils.h"
 
 #include <sys/inotify.h>
 #include <sys/epoll.h>
+
+#ifdef USE_LIBMOUNT_SUPPORT_WATCHQUEUE
+#define _LINUX_FCNTL_H				/* WORKAROUND to build against non-distro headers */
+# include <sys/ioctl.h>
+# include <linux/unistd.h>
+# include <linux/watch_queue.h>
+#endif
 
 
 struct monitor_opers;
@@ -585,6 +592,238 @@ err:
 }
 
 /*
+ * kernel mount-watch monitor
+ */
+#ifdef USE_LIBMOUNT_SUPPORT_WATCHQUEUE
+
+#ifndef HAVE_WATCH_MOUNT
+# include <sys/syscall.h>
+# ifndef __NR_watch_mount
+#  define __NR_watch_mount -1
+# endif
+static int watch_mount(int dfd, const char *filename, int at_flags, int fd, int id)
+{
+	return syscall(__NR_watch_mount, dfd, filename, at_flags, fd, id);
+}
+#endif /* HAVE_WATCH_MOUNT */
+
+/* watch specifig tags */
+enum {
+	MNT_KERNELWATCH_TAG_ROOTMOUNT	= 0x01
+};
+
+#define MNT_KERNELWATCH_QUEUE_SIZE	256	/* number of messages 1..512 */
+#define MNT_KERNELWATCH_MSG_MINSZ	sizeof(struct watch_notification)
+
+static int kernelwatch_monitor_close_fd(struct libmnt_monitor *mn __attribute__((__unused__)),
+				    struct monitor_entry *me)
+{
+	assert(me);
+
+	if (me->fd >= 0)
+		close(me->fd);
+	me->fd = -1;
+	return 0;
+}
+
+static int kernelwatch_monitor_get_fd(struct libmnt_monitor *mn __attribute__((__unused__)),
+				    struct monitor_entry *me)
+{
+	int rc;
+	int pipefd[2];
+
+	if (!me || me->enabled == 0)	/* not-initialized or disabled */
+		return -EINVAL;
+	if (me->fd >= 0)
+		return me->fd;		/* already initialized */
+
+	if (pipe2(pipefd, O_NOTIFICATION_PIPE | O_CLOEXEC | O_NONBLOCK) == -1)
+		goto err;
+
+	/* this is kernel design punk -- you need only one fd, but get two */
+	close(pipefd[1]);
+
+	me->fd = pipefd[0];
+	if (me->fd < 0)
+		goto err;
+
+	if (ioctl(me->fd, IOC_WATCH_QUEUE_SET_SIZE, MNT_KERNELWATCH_QUEUE_SIZE) == -1)
+		goto err;
+
+	if (watch_mount(AT_FDCWD, "/", 0, me->fd, MNT_KERNELWATCH_TAG_ROOTMOUNT) == -1)
+		goto err;
+
+	DBG(MONITOR, ul_debugobj(me, " new kernelwatch monitor [watch fd=%d]", me->fd));
+	return me->fd;
+err:
+	rc = -errno;
+	if (me->fd >= 0)
+		close(me->fd);
+	me->fd = -1;
+	DBG(MONITOR, ul_debugobj(me, "failed to create kernelwatch monitor [rc=%d]", rc));
+	return rc;
+}
+
+/*
+ * verify and drain inotify buffer
+ */
+static int kernelwatch_monitor_read(struct libmnt_monitor *mn,
+				    struct monitor_entry *me)
+{
+	int status = 0;
+
+	if (!me || me->fd < 0)
+		return 0;
+
+	do {
+		char *p;
+		size_t len = 0, rest = 0;
+
+		DBG(MONITOR, ul_debugobj(me, "reading kernelwatch monitor"));
+
+		me->bufrsz = read(me->fd, me->buf, me->bufsz);
+		if (me->bufrsz <= 0
+		    || me->bufrsz > (ssize_t) me->bufsz
+		    || me->bufrsz < (ssize_t) MNT_KERNELWATCH_MSG_MINSZ) {
+			DBG(MONITOR, ul_debugobj(me, " no data [rc=%zd]", me->bufrsz));
+			break;
+		}
+		rest = me->bufrsz;
+
+		for (p = me->buf; p < me->buf + me->bufrsz; p += len) {
+			const struct watch_notification *n =
+				(const struct watch_notification *) p;
+
+			len = n->info & WATCH_INFO_LENGTH;
+			if (len < MNT_KERNELWATCH_MSG_MINSZ || len > rest) {
+				DBG(MONITOR, ul_debugobj(me, " invalid in-header lenght"));
+				break;
+			}
+			rest -= len;
+
+			DBG(MONITOR, ul_debugobj(me, " watch event 0x%p "
+				"[len=%zu id=%d, info=%08x]",
+				n, len, n->info & WATCH_INFO_ID, n->info));
+
+			switch (n->type) {
+			case WATCH_TYPE_META:
+				switch (n->subtype) {
+				case WATCH_META_REMOVAL_NOTIFICATION:
+					DBG(MONITOR, ul_debugobj(me, "  meta: watchpoint removal"));
+					break;
+				case WATCH_META_LOSS_NOTIFICATION:
+					DBG(MONITOR, ul_debugobj(me, "  meta: data loss"));
+					break;
+				default:
+					DBG(MONITOR, ul_debugobj(me, "  meta: another subtype"));
+					break;
+				}
+				break;
+			case WATCH_TYPE_MOUNT_NOTIFY:
+				DBG(MONITOR, ul_debugobj(me, " mount notify"));
+				status = 1;
+				break;
+			case WATCH_TYPE_SB_NOTIFY:
+				DBG(MONITOR, ul_debugobj(me, " superblock notify"));
+				status = 1;
+				break;
+			default:
+				DBG(MONITOR, ul_debugobj(me, " another notify type"));
+				break;
+			}
+		}
+
+		if (status == 1 && me->keep_data)
+			break;
+	} while (1);
+
+	DBG(MONITOR, ul_debugobj(mn, "%s", status == 1 ? " success" : " nothing"));
+	return status;
+}
+
+/*
+ * kernelwatch monitor operations
+ */
+static const struct monitor_opers kernelwatch_opers = {
+	.op_get_fd	= kernelwatch_monitor_get_fd,
+	.op_close_fd	= kernelwatch_monitor_close_fd,
+	.op_event_read	= kernelwatch_monitor_read
+};
+
+static int __enable_kernelwatch(struct libmnt_monitor *mn, int enable)
+{
+	struct monitor_entry *me;
+	int rc = 0;
+
+	if (!mn)
+		return -EINVAL;
+
+	me = monitor_get_entry(mn, MNT_MONITOR_TYPE_KERNELWATCH);
+	if (me) {
+		rc = monitor_modify_epoll(mn, me, enable);
+		if (!enable)
+			kernelwatch_monitor_close_fd(mn, me);
+		return rc;
+	}
+	if (!enable)
+		return 0;
+
+	DBG(MONITOR, ul_debugobj(mn, "allocate new kernelwatch monitor"));
+
+	assert(BUFSIZ > sizeof(struct watch_notification) + 128);
+
+	me = monitor_new_entry(mn, BUFSIZ);
+	if (!me)
+		goto err;
+
+	me->type = MNT_MONITOR_TYPE_KERNELWATCH;
+	me->opers = &kernelwatch_opers;
+	me->events = EPOLLIN | EPOLLET;
+	me->keep_data = 1;
+
+	/* it's kernelwatch_monitor_get_fd() where we setup 'fd' and add watchs */
+	return monitor_modify_epoll(mn, me, TRUE);
+err:
+	rc = -errno;
+	free_monitor_entry(me);
+	DBG(MONITOR, ul_debugobj(mn, "failed to allocate kernelwatch monitor [rc=%d]", rc));
+	return rc;
+}
+
+#endif /* USE_LIBMOUNT_SUPPORT_WATCHQUEUE */
+
+/**
+ * mnt_monitor_enable_kernelwatch:
+ * @mn: monitor
+ * @enable: 0 or 1
+ *
+ * Enables or disables kernelwatch mounts and superblock. If the kernelwatch monitor does not
+ * exist and enable=1 then allocates new resources necessary for the monitor.
+ *
+ * If the top-level monitor has been already created (by mnt_monitor_get_fd()
+ * or mnt_monitor_wait()) then it's updated according to @enable.
+ *
+ * This monitor type is able to return "struct watch_notification" event data
+ * (as read() from kernel and it's enabled by default. See
+ * mnt_monitor_keep_data() and  mnt_monitor_event_data() for more details.
+ *
+ * Return: 0 on success and <0 on error
+ */
+#ifdef USE_LIBMOUNT_SUPPORT_WATCHQUEUE
+int mnt_monitor_enable_kernelwatch(struct libmnt_monitor *mn, int enable)
+{
+	return __enable_kernelwatch(mn, enable);
+}
+#else
+int mnt_monitor_enable_kernelwatch(
+		struct libmnt_monitor *mn __attribute__((__unused__)),
+		int enable __attribute__((__unused__)))
+{
+	return -ENOSYS;
+}
+#endif
+
+/*
  * Add/Remove monitor entry to/from monitor epoll.
  */
 static int monitor_modify_epoll(struct libmnt_monitor *mn,
@@ -629,6 +868,7 @@ static int monitor_modify_epoll(struct libmnt_monitor *mn,
 
 	return 0;
 err:
+	DBG(MONITOR, ul_debugobj(mn, " modify epoll faild"));
 	return -errno;
 }
 
@@ -957,6 +1197,11 @@ static struct libmnt_monitor *create_test_monitor(int argc, char *argv[])
 				warn("failed to initialize kernel monitor");
 				goto err;
 			}
+		} else if (strcmp(argv[i], "kernelwatch") == 0) {
+			if (mnt_monitor_enable_kernelwatch(mn, TRUE)) {
+				warn("failed to initialize kernelwatch monitor");
+				goto err;
+			}
 		}
 	}
 	if (i == 1) {
@@ -1094,11 +1339,27 @@ static int test_data(struct libmnt_test *ts, int argc, char *argv[])
 			ssize_t sz;
 			size_t chunksz = 0;
 
-			printf(" %s: change detected\n", filename);
+			printf(" %s: change detected [type=%d]\n", filename, type);
 
 			switch (type) {
 
-			case MNT_MONITOR_TYPE_KERNEL: /* no data, jusr epoll */
+			case MNT_MONITOR_TYPE_KERNEL: /* no data, just  epoll */
+				break;
+
+			case MNT_MONITOR_TYPE_KERNELWATCH:  /* watch_notification */
+				data = mnt_monitor_event_data(mn, type, &sz);
+
+				/* TODO: add functions to read mount-ID from data
+				 *       and hide all "struct watch_notification" there */
+
+				for (p = data; p && p < data + sz;
+				     p += sizeof(struct watch_notification) + chunksz) {
+					struct watch_notification *n =
+							(struct watch_notification *) p;
+
+					printf("  watch event %08x\n", n->info);
+					chunksz = n->info & WATCH_INFO_LENGTH;
+				}
 				break;
 
 			case MNT_MONITOR_TYPE_USERSPACE: /* inotify */
