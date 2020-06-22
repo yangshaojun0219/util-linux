@@ -1286,6 +1286,7 @@ static int test_data(struct libmnt_test *ts, int argc, char *argv[])
 {
 	const char *filename;
 	struct libmnt_monitor *mn = create_test_monitor(argc, argv);
+	struct libmnt_fs *fs = NULL;
 
 	if (!mn)
 		return -1;
@@ -1319,7 +1320,16 @@ static int test_data(struct libmnt_test *ts, int argc, char *argv[])
 					    !mnt_kernelwatch_is_mount(data))
 						break;
 					id = mnt_kernelwatch_get_mount_id(data);
-					printf(" mount ID=%d\n", id);
+
+					if (!fs)
+						fs = mnt_new_fs();
+					else
+						mnt_reset_fs(fs);
+					mnt_fs_set_id(fs, id);
+					mnt_fs_enable_fsinfo(fs, 1);
+
+					printf(" mount id=%d target=%s\n", id,
+							mnt_fs_get_target(fs));
 
 					data = mnt_kernelwatch_next_data(data, &sz);
 				} while (data);
@@ -1347,6 +1357,7 @@ static int test_data(struct libmnt_test *ts, int argc, char *argv[])
 			fflush(stdout);
 		}
 	}
+	mnt_unref_fs(fs);
 	mnt_unref_monitor(mn);
 	return 0;
 }
