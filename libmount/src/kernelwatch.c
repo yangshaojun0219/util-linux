@@ -89,13 +89,33 @@ int mnt_kernelwatch_is_mount(void *data)
  * mnt_kernelwatch_get_mount_id
  * @data: event data
  *
- * See also mnt_fs_set_id().
+ * This is ID of the mount node which trigers the notification, note that
+ * for example new mount, move or umount are triggered by parental filesystem.
  *
  * Returns: mount ID or <0 on error.
  *
  * Since: v2.37
  */
 int mnt_kernelwatch_get_mount_id(void *data)
+{
+	if (data && mnt_kernelwatch_is_mount(data)) {
+		const struct mount_notification *m = (const struct mount_notification *) data;
+		return m->triggered_on;
+	}
+	return -EINVAL;
+}
+
+/**
+ * mnt_kernelwatch_get_aux_id
+ * @data: event data
+ *
+ * This is ID of the mount note which is added/moved/removed or 0.
+ *
+ * Returns: mount ID or <0 on error.
+ *
+ * Since: v2.37
+ */
+int mnt_kernelwatch_get_aux_id(void *data)
 {
 	if (data && mnt_kernelwatch_is_mount(data)) {
 		const struct mount_notification *m = (const struct mount_notification *) data;

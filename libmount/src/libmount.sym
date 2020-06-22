@@ -362,9 +362,12 @@ MOUNT_2_36 {
 	mnt_fs_has_fsinfo;
 	mnt_has_fsinfo;
 	mnt_table_parse_fsinfo;
+	mnt_monitor_enable_kernelwatch;
+	mnt_monitor_event_data;
 	mnt_kernelwatch_is_mount;
 	mnt_kernelwatch_is_valid;
 	mnt_kernelwatch_get_mount_id;
+	mnt_kernelwatch_get_aux_id;
 	mnt_kernelwatch_get_operation;
 	mnt_kernelwatch_next_data;
 	mnt_fs_set_id;

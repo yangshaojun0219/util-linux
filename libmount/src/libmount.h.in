@@ -691,6 +691,7 @@ extern void *mnt_monitor_event_data(struct libmnt_monitor *mn, int type, ssize_t
 extern int mnt_kernelwatch_is_valid(void *data, size_t datasz);
 extern int mnt_kernelwatch_is_mount(void *data);
 extern int mnt_kernelwatch_get_mount_id(void *data);
+extern int mnt_kernelwatch_get_aux_id(void *data);
 extern int mnt_kernelwatch_get_operation(void *data);
 extern void *mnt_kernelwatch_next_data(void *data, ssize_t *datasz);
 
