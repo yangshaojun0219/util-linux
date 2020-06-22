@@ -1,6 +1,7 @@
 if BUILD_LIBMOUNT
 
 include libmount/src/Makemodule.am
+include libmount/samples/Makemodule.am
 include libmount/python/Makemodule.am
 
 if ENABLE_GTK_DOC

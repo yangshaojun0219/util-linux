@@ -1,0 +1,11 @@
+
+check_PROGRAMS += \
+	sample-mount-watchqueue 
+
+sample_mount_cflags = $(AM_CFLAGS) $(NO_UNUSED_WARN_CFLAGS) \
+                      -I$(ul_libmount_incdir)
+sample_mount_ldadd = $(LDADD) libmount.la
+
+sample_mount_watchqueue_SOURCES = libmount/samples/watchqueue.c
+sample_mount_watchqueue_LDADD = $(sample_mount_ldadd) libcommon.la
+sample_mount_watchqueue_CFLAGS = $(sample_mount_cflags)
