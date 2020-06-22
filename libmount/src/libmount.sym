@@ -367,5 +367,6 @@ MOUNT_2_36 {
 	mnt_kernelwatch_get_mount_id;
 	mnt_kernelwatch_get_operation;
 	mnt_kernelwatch_next_data;
+	mnt_fs_set_id;
 } MOUNT_2_35;
 

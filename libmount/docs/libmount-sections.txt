@@ -261,6 +261,7 @@ mnt_fs_set_bindsrc
 mnt_fs_set_comment
 mnt_fs_set_freq
 mnt_fs_set_fstype
+mnt_fs_set_id
 mnt_fs_set_options
 mnt_fs_set_passno
 mnt_fs_set_priority

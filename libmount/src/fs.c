@@ -1311,6 +1311,21 @@ int mnt_fs_get_id(struct libmnt_fs *fs)
 }
 
 /**
+ * mnt_fs_set_id:
+ * @fs: filesystem instance
+ * @id: new ID
+ *
+ * Returns: 0 on success or negative number in case of error.
+ */
+int mnt_fs_set_id(struct libmnt_fs *fs, int id)
+{
+	if (!fs)
+		return -EINVAL;
+	fs->id = id;
+	return 0;
+}
+
+/**
  * mnt_fs_get_parent_id:
  * @fs: /proc/self/mountinfo entry
  *
