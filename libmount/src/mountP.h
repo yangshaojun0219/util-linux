@@ -51,6 +51,7 @@
 #define MNT_DEBUG_BTRFS		(1 << 12)
 #define MNT_DEBUG_LOOP		(1 << 13)
 #define MNT_DEBUG_VERITY	(1 << 14)
+#define MNT_DEBUG_WATCH		(1 << 15)
 
 #define MNT_DEBUG_ALL		0xFFFF
 

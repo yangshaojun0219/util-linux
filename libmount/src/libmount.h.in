@@ -686,6 +686,13 @@ extern int mnt_monitor_event_cleanup(struct libmnt_monitor *mn);
 extern int mnt_monitor_keep_data(struct libmnt_monitor *mn, int type, int enable);
 extern void *mnt_monitor_event_data(struct libmnt_monitor *mn, int type, ssize_t *bufsz);
 
+/* kernelwatch.c */
+extern int mnt_kernelwatch_is_valid(void *data, size_t datasz);
+extern int mnt_kernelwatch_is_mount(void *data);
+extern int mnt_kernelwatch_get_mount_id(void *data);
+extern int mnt_kernelwatch_get_operation(void *data);
+extern void *mnt_kernelwatch_next_data(void *data, ssize_t *datasz);
+
 
 /* context.c */
 

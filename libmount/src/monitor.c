@@ -613,7 +613,6 @@ enum {
 };
 
 #define MNT_KERNELWATCH_QUEUE_SIZE	256	/* number of messages 1..512 */
-#define MNT_KERNELWATCH_MSG_MINSZ	sizeof(struct watch_notification)
 
 static int kernelwatch_monitor_close_fd(struct libmnt_monitor *mn __attribute__((__unused__)),
 				    struct monitor_entry *me)
@@ -677,61 +676,26 @@ static int kernelwatch_monitor_read(struct libmnt_monitor *mn,
 
 	do {
 		char *p;
-		size_t len = 0, rest = 0;
+		ssize_t rest;
 
 		DBG(MONITOR, ul_debugobj(me, "reading kernelwatch monitor"));
 
 		me->bufrsz = read(me->fd, me->buf, me->bufsz);
 		if (me->bufrsz <= 0
-		    || me->bufrsz > (ssize_t) me->bufsz
-		    || me->bufrsz < (ssize_t) MNT_KERNELWATCH_MSG_MINSZ) {
+		    || me->bufrsz > (ssize_t) me->bufsz) {
 			DBG(MONITOR, ul_debugobj(me, " no data [rc=%zd]", me->bufrsz));
 			break;
 		}
 		rest = me->bufrsz;
+		p = me->buf;
 
-		for (p = me->buf; p < me->buf + me->bufrsz; p += len) {
-			const struct watch_notification *n =
-				(const struct watch_notification *) p;
+		do {
+			if (!mnt_kernelwatch_is_valid(p, rest))
+				break;
 
-			len = n->info & WATCH_INFO_LENGTH;
-			if (len < MNT_KERNELWATCH_MSG_MINSZ || len > rest) {
-				DBG(MONITOR, ul_debugobj(me, " invalid in-header lenght"));
-				break;
-			}
-			rest -= len;
-
-			DBG(MONITOR, ul_debugobj(me, " watch event 0x%p "
-				"[len=%zu id=%d, info=%08x]",
-				n, len, n->info & WATCH_INFO_ID, n->info));
-
-			switch (n->type) {
-			case WATCH_TYPE_META:
-				switch (n->subtype) {
-				case WATCH_META_REMOVAL_NOTIFICATION:
-					DBG(MONITOR, ul_debugobj(me, "  meta: watchpoint removal"));
-					break;
-				case WATCH_META_LOSS_NOTIFICATION:
-					DBG(MONITOR, ul_debugobj(me, "  meta: data loss"));
-					break;
-				default:
-					DBG(MONITOR, ul_debugobj(me, "  meta: another subtype"));
-					break;
-				}
-				break;
-			case WATCH_TYPE_MOUNT_NOTIFY:
-				DBG(MONITOR, ul_debugobj(me, " mount notify"));
-				status = 1;
-				break;
-			case WATCH_TYPE_SB_NOTIFY:
-				DBG(MONITOR, ul_debugobj(me, " superblock notify"));
-				status = 1;
-				break;
-			default:
-				DBG(MONITOR, ul_debugobj(me, " another notify type"));
-				break;
-			}
-		}
+			status = mnt_kernelwatch_is_mount(p);
+			p = mnt_kernelwatch_next_data(p, &rest);
+		} while (p);
 
 		if (status == 1 && me->keep_data)
 			break;
@@ -1339,43 +1303,48 @@ static int test_data(struct libmnt_test *ts, int argc, char *argv[])
 			ssize_t sz;
 			size_t chunksz = 0;
 
-			printf(" %s: change detected [type=%d]\n", filename, type);
-
 			switch (type) {
-
 			case MNT_MONITOR_TYPE_KERNEL: /* no data, just  epoll */
+				printf("epoll event on %s detected\n", filename);
 				break;
 
 			case MNT_MONITOR_TYPE_KERNELWATCH:  /* watch_notification */
+				printf("watch-queue event detected\n");
+
 				data = mnt_monitor_event_data(mn, type, &sz);
+				do {
+					int id;
 
-				/* TODO: add functions to read mount-ID from data
-				 *       and hide all "struct watch_notification" there */
+					if (!mnt_kernelwatch_is_valid(data, sz) ||
+					    !mnt_kernelwatch_is_mount(data))
+						break;
+					id = mnt_kernelwatch_get_mount_id(data);
+					printf(" mount ID=%d\n", id);
 
-				for (p = data; p && p < data + sz;
-				     p += sizeof(struct watch_notification) + chunksz) {
-					struct watch_notification *n =
-							(struct watch_notification *) p;
-
-					printf("  watch event %08x\n", n->info);
-					chunksz = n->info & WATCH_INFO_LENGTH;
-				}
+					data = mnt_kernelwatch_next_data(data, &sz);
+				} while (data);
 				break;
 
 			case MNT_MONITOR_TYPE_USERSPACE: /* inotify */
+				printf("inotify event on %s detected\n", filename);
 				data = mnt_monitor_event_data(mn, type, &sz);
 				for (p = data; p && p < data + sz;
 				     p += sizeof(struct inotify_event) + chunksz) {
 					struct inotify_event *e =
 							(struct inotify_event *) p;
 
-					printf("  inotify event mask=0x%x, name=%s\n",
+					printf(" mask=0x%x, name=%s\n",
 						e->mask, e->len ? e->name : "");
 
 					chunksz = e->len;
 				}
 				break;
+
+			default:
+				printf("unknown event\n");
+				break;
 			}
+			fflush(stdout);
 		}
 	}
 	mnt_unref_monitor(mn);
