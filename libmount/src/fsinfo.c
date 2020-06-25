@@ -172,8 +172,13 @@ int mnt_has_fsinfo(void)
 			.request = FSINFO_ATTR_MOUNT_INFO,
 		};
 		size_t sz = sizeof(info);
+		long rc;
 
-		mnt_fsinfo("/", &params, sizeof(params), (char *)&info, &sz);
+		rc = mnt_fsinfo("/", &params, sizeof(params), (char *)&info, &sz);
+		if (rc != 1)
+			have_fsinfo = 1;
+		else
+			have_fsinfo = 0;
 	}
 	return have_fsinfo;
 #else
