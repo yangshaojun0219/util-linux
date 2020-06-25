@@ -735,9 +735,9 @@ static int parse_fsinfo_init_fs(
 	return rc;
 }
 
-static int table_parse_fetch_chldren(struct libmnt_table *tb,
-				     unsigned int id, struct libmnt_fs *parent,
-				     struct libmnt_parser *pa)
+static int table_parse_fetch_mounts(struct libmnt_table *tb,
+				    unsigned int id, struct libmnt_fs *parent,
+				    struct libmnt_parser *pa)
 {
 	struct libmnt_fs *fs = NULL;
 	struct fsinfo_mount_child *mounts = NULL;
@@ -762,8 +762,8 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb,
 		pa->has_root_fs = 1;
 	}
 
-	/* children list */
-	rc = mnt_fsinfo_get_children(id, &mounts, &count);
+	/* mount list */
+	rc = mnt_fsinfo_get_mounts(id, &mounts, &count);
 	if (rc != 0)
 		goto out;
 	if (!count)
@@ -781,11 +781,6 @@ static int table_parse_fetch_chldren(struct libmnt_table *tb,
 		rc = parse_fsinfo_init_fs(tb, fs, mounts[i].mnt_id, parent, pa);
 		if (!rc)
 			rc = mnt_table_add_fs(tb, fs);
-		if (!rc) {
-			rc = table_parse_fetch_chldren(tb, mnt_fs_get_id(fs), fs, pa);
-			if (rc)
-				mnt_table_remove_fs(tb, fs);
-		}
 		if (rc) {
 			if (rc > 0) {
 				mnt_reset_fs(fs);
@@ -818,7 +813,7 @@ static int __table_parse_fsinfo(struct libmnt_table *tb)
 	if (rc < 0)
 		goto err;
 
-	rc = table_parse_fetch_chldren(tb, id, NULL, &pa);
+	rc = table_parse_fetch_mounts(tb, id, NULL, &pa);
 	if (rc < 0)
 		goto err;
 
