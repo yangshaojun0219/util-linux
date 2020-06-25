@@ -443,6 +443,9 @@ extern int mnt_fsinfo(const char *query,
 extern int mnt_fsinfo_get_children(unsigned int id,
                             struct fsinfo_mount_child **mounts,
                             size_t *count);
+extern int mnt_fsinfo_get_mounts(unsigned int id,
+			    struct fsinfo_mount_child **mounts,
+			    size_t *count);
 #endif
 
 /* context.c */

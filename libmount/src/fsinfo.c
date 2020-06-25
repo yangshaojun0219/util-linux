@@ -132,25 +132,49 @@ static void *fsinfo_alloc_attrs(unsigned int id,
 }
 
 /* Returns: 0 on success, <0 on error */
+static int mnt_fsinfo_get_id_list(unsigned int id, unsigned int attr,
+				  struct fsinfo_mount_child **mounts,
+				  size_t *count)
+{
+	size_t size = 0;
+
+	*mounts = fsinfo_alloc_attrs(id, attr, 0, &size);
+	if (!*mounts)
+		return -errno;
+
+	/* Don't include mount for id itself when getting children */
+	if (attr == FSINFO_ATTR_MOUNT_CHILDREN)
+		*count = size / sizeof((*mounts)[0]) - 1;
+	else
+		*count = size / sizeof((*mounts)[0]);
+	return 0;
+}
+
+/* Returns: 0 on success, <0 on error */
 int mnt_fsinfo_get_children(unsigned int id,
 			    struct fsinfo_mount_child **mounts,
 			    size_t *count)
 {
-	size_t size = 0;
-
 	assert(id);
 	assert(mounts);
 	assert(count);
 
 	DBG(UTILS, ul_debug("fsinfo: reading children for id=%u", id));
-	*mounts = fsinfo_alloc_attrs(id, FSINFO_ATTR_MOUNT_CHILDREN, 0, &size);
-	if (!*mounts)
-		return -errno;
-
-	*count = size / sizeof((*mounts)[0]) - 1;
-	return 0;
+	return mnt_fsinfo_get_id_list(id, FSINFO_ATTR_MOUNT_CHILDREN, mounts, count);
 }
 
+/* Returns: 0 on success, <0 on error */
+int mnt_fsinfo_get_mounts(unsigned int id,
+			  struct fsinfo_mount_child **mounts,
+			  size_t *count)
+{
+	assert(id);
+	assert(mounts);
+	assert(count);
+
+	DBG(UTILS, ul_debug("fsinfo: reading all mounts for id=%u", id));
+	return mnt_fsinfo_get_id_list(id, FSINFO_ATTR_MOUNT_ALL, mounts, count);
+}
 #endif /* USE_LIBMOUNT_SUPPORT_FSINFO */
 
 /*
