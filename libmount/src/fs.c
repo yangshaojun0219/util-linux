@@ -89,6 +89,44 @@ static unsigned int fsinfo_off2req(size_t member_offset)
 		__r >= 0 ? mnt_fs_fetch_fsinfo(_fs, __r) : __r; \
 })
 
+struct mount_attr_map_entry {
+	unsigned int attr;
+	unsigned int ms_opt;
+};
+
+static const struct mount_attr_map_entry mount_attr_map[] =
+{
+	{MOUNT_ATTR_RDONLY,		MS_RDONLY},
+	{MOUNT_ATTR_NOSUID,		MS_NOSUID},
+	{MOUNT_ATTR_NODEV,		MS_NODEV},
+	{MOUNT_ATTR_NOEXEC,		MS_NOEXEC},
+	{MOUNT_ATTR_NOATIME,		MS_NOATIME},
+	{MOUNT_ATTR_STRICTATIME,	MS_STRICTATIME},
+	{MOUNT_ATTR_NODIRATIME,		MS_NODIRATIME},
+};
+
+/* convert fsinfo MOUNT_ATTR_ to MS_ request ID */
+static unsigned int fsinfo_mount_attr2ms(unsigned int attr)
+{
+	unsigned int ms_opts = 0;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(mount_attr_map); i++) {
+		/* proc tables don't show "strictatime" */
+		if (attr & MOUNT_ATTR_STRICTATIME)
+			continue;
+		if (attr & mount_attr_map[i].attr)
+			ms_opts |= mount_attr_map[i].ms_opt;
+	}
+
+	/* If neither MOUNT_ATTR_NOATIME or MOUNT_ATTR_STRICTATIME is
+	 * set then it's "relatime".
+	 */
+	if (!(attr & MOUNT_ATTR__ATIME))
+		ms_opts |= MS_RELATIME;
+
+	return ms_opts;
+}
 #else /* !USE_LIBMOUNT_SUPPORT_FSINFO */
 #define mnt_fs_fetch_member_fsinfo(_fs, _member) __extension__ ({ \
 		(0); \
@@ -1854,14 +1892,14 @@ static int fsinfo_buf2fs(struct libmnt_fs *fs,
 	case FSINFO_ATTR_MOUNT_INFO:
 	{
 		struct fsinfo_mount_info *x = (struct fsinfo_mount_info *) buf;
+		unsigned int ms_opts;
 		/* mount ID */
 		fs->id = x->mnt_id;
 		/* VFS  options (convert it to strings) */
 		free(fs->vfs_optstr);
 		fs->vfs_optstr = NULL;
-		if ((x->attr & (MOUNT_ATTR_NOATIME|MOUNT_ATTR_STRICTATIME)) == 0)
-			x->attr |= MS_RELATIME;
-		rc = mnt_optstr_apply_flags(&fs->vfs_optstr, x->attr,
+		ms_opts = fsinfo_mount_attr2ms(x->attr);
+		rc = mnt_optstr_apply_flags(&fs->vfs_optstr, ms_opts,
 				mnt_get_builtin_optmap(MNT_LINUX_MAP));
 		break;
 	}
