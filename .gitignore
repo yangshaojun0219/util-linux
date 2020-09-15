@@ -130,6 +130,7 @@ ylwrap
 /mkswap
 /more
 /mount
+/mountbomber
 /mountpoint
 /namei
 /newgrp
