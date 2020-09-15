@@ -1191,6 +1191,16 @@ UL_REQUIRES_BUILD([mount], [libmount])
 AM_CONDITIONAL([BUILD_MOUNT], [test "x$build_mount" = xyes])
 
 
+AC_ARG_ENABLE([mountbomber],
+  AS_HELP_STRING([--enable-mount], [do build mountbomber(8)]),
+  [], [UL_DEFAULT_ENABLE([mountbomber], [no])]
+)
+UL_BUILD_INIT([mountbomber])
+UL_REQUIRES_LINUX([mountbomber])
+UL_REQUIRES_BUILD([mountbomber], [libmount])
+AM_CONDITIONAL([BUILD_MOUNTBOMBER], [test "x$build_mountbomber" = xyes])
+
+
 AC_ARG_ENABLE([losetup],
   AS_HELP_STRING([--disable-losetup], [do not build losetup]),
   [], [UL_DEFAULT_ENABLE([losetup], [check])]

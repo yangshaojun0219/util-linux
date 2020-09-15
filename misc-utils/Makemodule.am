@@ -229,3 +229,11 @@ hardlink_CFLAGS += $(PCRE_CFLAGS)
 endif
 dist_man_MANS += misc-utils/hardlink.1
 endif
+
+
+if BUILD_MOUNTBOMBER
+usrbin_exec_PROGRAMS += mountbomber
+mountbomber_SOURCES = misc-utils/mountbomber.c
+mountbomber_LDADD = $(LDADD) libcommon.la libmount.la
+mountbomber_CFLAGS = $(AM_CFLAGS) -I$(ul_libmount_incdir)
+endif # BUILD_MOUNT
