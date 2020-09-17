@@ -258,6 +258,12 @@ static inline const char *skip_blank(const char *p)
 	return p;
 }
 
+static inline const char *skip_alnum(const char *p)
+{
+	while (isalnum(*p))
+		++p;
+	return p;
+}
 
 /* Removes whitespace from the right-hand side of a string (trailing
  * whitespace).
