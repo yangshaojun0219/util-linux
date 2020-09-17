@@ -116,6 +116,13 @@ mesg_bar(struct bomber_ctl *ctl, const char *fmt, ...)
 	ctl->carriage_ret = 1;
 }
 
+static void
+mesg_bar_done(struct bomber_ctl *ctl)
+{
+	mesg_cr_cleanup(ctl);
+	ctl->mesg_section = 0;
+}
+
 static void __attribute__ ((__format__ (__printf__, 2, 3)))
 mesg_start(struct bomber_ctl *ctl, const char *fmt, ...)
 {
@@ -195,13 +202,13 @@ static int bomber_init_mountdir(struct bomber_ctl *ctl)
 		return rc;
 	}
 
-	mesg_start(ctl, _("Initialize mount directories"));
-
 	for (i = 0; i < ctl->nmounts; i++) {
 		int rc;
 		char name[MOUNTPOINT_BUFSZ];
 
 		get_mountpoint_name(i, name, sizeof(name));
+
+		mesg_bar(ctl, _("initialize mountpoint: %05zu"), i);
 
 		rc = mkdir(name, mode);
 		if (rc && errno != EEXIST) {
@@ -210,7 +217,7 @@ static int bomber_init_mountdir(struct bomber_ctl *ctl)
 		}
 	}
 
-	mesg_done(ctl);
+	mesg_bar_done(ctl);
 	return rc;
 }
 
@@ -226,35 +233,26 @@ static void bomber_cleanup_dir(struct bomber_ctl *ctl)
 		return;
 	}
 
-	mesg_start(ctl, _("Cleaning mount directories"));
-
 	for (i = 0; i < ctl->nmounts; i++) {
 		char name[MOUNTPOINT_BUFSZ];
 
 		get_mountpoint_name(i, name, sizeof(name));
 
+		mesg_bar(ctl, _("cleanup mountpoint: %05zu"), i);
+
 		if (rmdir(name) && errno != ENOENT)
 			mesg_warn(ctl, _("connot remove directory %s"), name);
 	}
 
+	mesg_bar_done(ctl);
+
 	if (rmdir(ctl->dir) && errno != ENOENT)
 		mesg_warn(ctl, _("connot remove directory %s"), ctl->dir);
-
-	mesg_done(ctl);
 }
 
 static int bomber_init_pool(struct bomber_ctl *ctl)
 {
 	assert(ctl);
-
-	return 0;
-}
-
-static int bomber_get_status(struct bomber_ctl *ctl, size_t *done, size_t *active)
-{
-	assert(ctl);
-	assert(done);
-	assert(active);
 
 	return 0;
 }
@@ -400,18 +398,6 @@ int main(int argc, char *argv[])
 	rc = bomber_init_mountdir(ctl);
 	if (rc == 0)
 		bomber_init_pool(ctl);
-
-	while  (rc == 0 && sig_die == 0) {
-		size_t done = 0, active = 0;
-
-		rc = bomber_get_status(ctl, &done, &active);
-		if (rc || sig_die)
-			continue;
-
-		mesg_bar(ctl, _("active: %zu, all: %zu, done: %zu"), active, ctl->nmounts, done);
-		if (!sig_die)
-			xusleep(250000);
-	}
 
 	if (sig_die)
 		mesg_warnx(ctl, _("interrupted by signal"));
