@@ -30,16 +30,47 @@
 #define MOUNTPOINT_BUFSZ	sizeof(stringify_value(SIZE_MAX))
 
 enum {
-	BOMBER_OPER_NONE = 0,
-	BOMBER_OPER_MOUNT,
-	BOMBER_OPER_UMOUNT,
-	BOMBER_OPER_REMOUNT
+	CMD_MOUNT,
+	CMD_UMOUNT,
+	CMD_REMOUNT,
+	CMD_DELAY,
+	CMD_REPEAT
 };
 
-struct bomber_oper {
-	int	type;	/* BOMBER_OPER_ */
+static const char *cmdnames[] = {
+	[CMD_DELAY] = "delay",
+	[CMD_MOUNT] = "mount",
+	[CMD_REMOUNT] = "remount",
+	[CMD_REPEAT] = "repeat",
+	[CMD_UMOUNT] = "umount",
+};
 
-	struct libmnt_fs *fs;
+enum {
+	CMD_TARGET_ALL,		/* default */
+
+	CMD_TARGET_LAST,
+	CMD_TARGET_NEXT,
+	CMD_TARGET_PREV,
+	CMD_TARGET_RAND,
+};
+
+static const char *targetnames[] = {
+	[CMD_TARGET_ALL] = "all",
+
+	[CMD_TARGET_LAST] = "last",
+	[CMD_TARGET_NEXT] = "next",
+	[CMD_TARGET_PREV] = "prev",
+	[CMD_TARGET_RAND] = "rand",
+};
+
+struct bomber_cmd {
+	size_t id;		/* CMD_ */
+	size_t target;	/* CMD_TARGET_ */
+
+	size_t last_mountpoint;
+
+	char *args;	/* command options specified by user */
+	void *data;	/* private command data */
 };
 
 struct bomber_ctl {
@@ -50,8 +81,8 @@ struct bomber_ctl {
 
 	const char *dir;	/* --dir <dir> */
 
-	struct bomber_oper	*opers;
-	size_t			nopers;
+	struct bomber_cmd *commands;
+	size_t ncommands;
 
 	unsigned int clean_dir : 1,
 		     carriage_ret: 1,
@@ -228,6 +259,87 @@ static int bomber_get_status(struct bomber_ctl *ctl, size_t *done, size_t *activ
 	return 0;
 }
 
+static inline size_t name2idx(const char *name, const char **ary, size_t arysz, const char *errmsg)
+{
+	size_t i;
+
+	for (i = 0; i < arysz; i++) {
+		if (strcmp(name, ary[i]) == 0)
+			return i;
+	}
+
+	errx(EXIT_FAILURE, errmsg, name);
+	return 0;
+}
+
+
+
+static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
+{
+	char *cmdstr = xstrdup(str);
+	char *xstr = cmdstr;
+
+	while (xstr && *xstr) {
+		struct bomber_cmd *cmd;
+		char *name, *end, *args = NULL, *target = NULL;
+
+		ctl->commands = xrealloc(ctl->commands,
+					(ctl->ncommands + 1) * sizeof(struct bomber_cmd));
+
+		cmd = &ctl->commands[ctl->ncommands];
+		ctl->ncommands++;
+
+		memset(cmd, 0, sizeof(*cmd));
+
+		name = xstr;
+		end = (char *) skip_alnum(xstr);
+
+		/* name terminator */
+		switch (*end) {
+		case '(':
+			args = end + 1;
+			break;
+		case ':':
+			target = end + 1;
+			break;
+		case ',':
+		case '\0':
+			break;
+		default:
+			errx(EXIT_FAILURE, _("failed to parse command name '%s'"), name);
+			break;
+		}
+
+		xstr = *end ? end + 1 : end;
+		*end = '\0';
+		cmd->id = name2idx(name, cmdnames, ARRAY_SIZE(cmdnames),
+					_("unknown command name '%s'"));
+		if (args) {
+			end = strchr(args, ')');
+			if (!end)
+				errx(EXIT_FAILURE, _("missing terminating ')' in '%s'"), args);
+			*end = '\0';
+			cmd->args = xstrdup(args);
+			xstr = end + 1;
+
+			if (*xstr == ':')
+				target = xstr + 1;
+		}
+
+		if (target) {
+			end = (char *) skip_alnum(target);
+			xstr = *end ? end + 1 : end;
+			*end = '\0';
+			cmd->target = name2idx(target, targetnames,
+						ARRAY_SIZE(targetnames),
+						_("unknown command target '%s'"));
+		}
+	}
+
+	free(cmdstr);
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	struct bomber_ctl _ctl = {
@@ -240,7 +352,7 @@ int main(int argc, char *argv[])
 		{ "parallel",   required_argument, NULL, 'x' },
 		{ "freq",       required_argument, NULL, 'f' },
 		{ "dir",	required_argument, NULL, 'd' },
-		{ "operation",  required_argument, NULL, 'O' },
+		{ "oper",       required_argument, NULL, 'O' },
 		{ NULL, 0, NULL, 0 }
 	};
 
@@ -249,7 +361,7 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 	close_stdout_atexit();
 
-	while ((c = getopt_long(argc, argv, "p:x:f:d:O", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:x:f:d:O:", longopts, NULL)) != -1) {
 
 		switch(c) {
 		case 'p':
@@ -265,6 +377,7 @@ int main(int argc, char *argv[])
 			ctl->dir = xstrdup(optarg);
 			break;
 		case 'O':
+			bomber_add_command(ctl, optarg);
 			break;
 		}
 	}
