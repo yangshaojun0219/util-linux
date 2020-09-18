@@ -105,7 +105,6 @@ struct bomber_ctl {
 
 	unsigned int clean_dir : 1,
 		     carriage_ret: 1,
-		     mesg_section : 1,
 		     no_cleanup : 1;
 };
 
@@ -140,30 +139,6 @@ static void
 mesg_bar_done(struct bomber_ctl *ctl)
 {
 	mesg_cr_cleanup(ctl);
-	ctl->mesg_section = 0;
-}
-
-static void __attribute__ ((__format__ (__printf__, 2, 3)))
-mesg_start(struct bomber_ctl *ctl, const char *fmt, ...)
-{
-	va_list ap;
-
-	mesg_cr_cleanup(ctl);
-
-	va_start(ap, fmt);
-	vfprintf(stdout, fmt, ap);
-	va_end(ap);
-	fputs(" ... ", stdout);
-
-	ctl->mesg_section = 1;
-}
-
-static void
-mesg_done(struct bomber_ctl *ctl)
-{
-	mesg_cr_cleanup(ctl);
-	fputs(_("done\n"), stdout);
-	ctl->mesg_section = 0;
 }
 
 static void __attribute__ ((__format__ (__printf__, 2, 3)))
@@ -172,9 +147,6 @@ mesg_warn(struct bomber_ctl *ctl, const char *fmt, ...)
 	va_list ap;
 
 	mesg_cr_cleanup(ctl);
-	if (ctl->mesg_section)
-		fputs("   ", stdout);
-
 	va_start(ap, fmt);
 	vwarn(fmt, ap);
 	va_end(ap);
@@ -186,9 +158,6 @@ mesg_warnx(struct bomber_ctl *ctl, const char *fmt, ...)
 	va_list ap;
 
 	mesg_cr_cleanup(ctl);
-	if (ctl->mesg_section)
-		fputs("   ", stdout);
-
 	va_start(ap, fmt);
 	vwarnx(fmt, ap);
 	va_end(ap);
