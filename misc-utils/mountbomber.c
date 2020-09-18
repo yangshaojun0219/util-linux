@@ -15,6 +15,7 @@
 
 #include "nls.h"
 #include "c.h"
+#include "bitops.h"
 #include "env.h"
 #include "strutils.h"
 #include "closestream.h"
@@ -65,10 +66,11 @@ static const char *targetnames[] = {
 };
 
 struct bomber_cmd {
-	size_t id;		/* CMD_ */
+	size_t id;	/* CMD_ */
+	size_t idx;
 	size_t target;	/* CMD_TARGET_ */
 
-	size_t last_mountpoint;
+	int last_mountpoint;
 
 	char *args;	/* command options specified by user */
 
@@ -79,8 +81,10 @@ struct bomber_cmd {
 struct bomber_worker {
 	pid_t pid;
 	int status;		/* status as returned by wait() */
+
 	size_t pool_off;	/* first mountpoint */
 	size_t pool_len;	/* number of mounpoints assigned to the worker */
+	char *pool_status;
 
 	struct timeval starttime;
 };
@@ -101,7 +105,8 @@ struct bomber_ctl {
 
 	unsigned int clean_dir : 1,
 		     carriage_ret: 1,
-		     mesg_section : 1;
+		     mesg_section : 1,
+		     no_cleanup : 1;
 };
 
 static volatile sig_atomic_t sig_die;
@@ -255,8 +260,15 @@ static void bomber_cleanup_dir(struct bomber_ctl *ctl)
 
 		mesg_bar(ctl, _("cleanup mountpoint: %05zu"), i + 1);
 
-		if (rmdir(name) && errno != ENOENT)
-			mesg_warn(ctl, _("connot remove directory %s"), name);
+		if (rmdir(name)) {
+			if (errno == EBUSY) {
+				umount(name);
+				errno = 0;
+				rmdir(name);
+			}
+			if (errno != ENOENT)
+				mesg_warn(ctl, _("connot remove directory %s"), name);
+		}
 	}
 
 	mesg_bar_done(ctl);
@@ -265,10 +277,98 @@ static void bomber_cleanup_dir(struct bomber_ctl *ctl)
 		mesg_warn(ctl, _("connot remove directory %s"), ctl->dir);
 }
 
+static int last_mountpoint(struct bomber_ctl *ctl, size_t cur)
+{
+	size_t i;
+
+	for (i = cur - 1; i > 0; i--) {
+		if (ctl->commands[i - 1].last_mountpoint != -1)
+			return ctl->commands[i - 1].last_mountpoint;
+	}
+
+	return -1;
+}
+
+static inline int is_mounted(struct bomber_worker *wrk, size_t mnt)
+{
+	return isset(wrk->pool_status, mnt - wrk->pool_off);
+}
+
+static inline int set_mounted(struct bomber_worker *wrk, size_t mnt)
+{
+	return setbit(wrk->pool_status, mnt - wrk->pool_off);
+}
+
+static int do_mount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t mnt)
+{
+	char name[MOUNTPOINT_BUFSZ];
+	int rc;
+
+	if (is_mounted(wrk, mnt))
+		return 0;
+
+	get_mountpoint_name(mnt, name, sizeof(name));
+
+	rc = mount("tmpfs", name, "tmpfs", 0, NULL);
+	if (rc)
+		warn("mount failed");
+	else {
+		set_mounted(wrk, mnt);
+		cmd->last_mountpoint = mnt;
+	}
+	return rc;
+}
+
+static int cmd_mount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct bomber_cmd *cmd)
+{
+	int mnt = -1, rc = 0;
+	int lo = wrk->pool_off;
+	int up = wrk->pool_off + wrk->pool_len - 1;
+
+	switch (cmd->target) {
+	case CMD_TARGET_RAND:
+		mnt = (rand() % (up - lo + 1)) + lo;
+		break;
+	case CMD_TARGET_LAST:
+		mnt = last_mountpoint(ctl, cmd->idx);
+		if (mnt < 0)
+			return 0;
+		break;
+	case CMD_TARGET_NEXT:
+		mnt = last_mountpoint(ctl, cmd->idx) + 1;
+		if (mnt < 0)
+			return 0;
+		if (mnt > up)
+			mnt = lo;
+		break;
+	case CMD_TARGET_PREV:
+		mnt = last_mountpoint(ctl, cmd->idx) - 1;
+		if (mnt < 0)
+			return 0;
+		if (mnt < lo)
+			mnt = up;
+		break;
+	default:
+		mnt = -1;
+		break;
+	}
+
+	if (mnt >= 0)
+		rc = do_mount(wrk, cmd, mnt);
+
+	else if (cmd->target == CMD_TARGET_ALL) {
+		for (mnt = lo; mnt <= up; mnt++) {
+			rc += do_mount(wrk, cmd, mnt);
+		}
+	}
+
+	return rc;
+}
+
 static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 {
 	pid_t pid;
-	int status = 0;
+	int rc = 0;
 
 	switch ((pid = fork())) {
 	case -1:
@@ -280,12 +380,41 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 		return pid;
 	}
 
+	/* init */
+	wrk->pool_status = xcalloc(wrk->pool_len / NBBY + 1, sizeof(char));
+
 	/* child main loop */
 	while (sig_die == 0) {
-		sleep(10);
+		size_t i;
+
+		for (i = 0; i < ctl->ncommands; i++) {
+			struct bomber_cmd *cmd = &ctl->commands[i];
+
+			switch (cmd->id) {
+			case CMD_MOUNT:
+				rc = cmd_mount(ctl, wrk, cmd);
+				break;
+			case CMD_UMOUNT:
+				break;
+			case CMD_REMOUNT:
+				break;
+			case CMD_DELAY:
+				break;
+			case CMD_REPEAT:
+				break;
+			default:
+				rc = -EINVAL;
+				break;
+			}
+			if (rc)
+				break;
+		}
 	};
 
-	exit(status);
+	if (rc)
+		err(EXIT_FAILURE, _("worker %d: failed"), getpid());
+
+	exit(EXIT_SUCCESS);
 }
 
 static int bomber_init_pool(struct bomber_ctl *ctl)
@@ -429,9 +558,11 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 					(ctl->ncommands + 1) * sizeof(struct bomber_cmd));
 
 		cmd = &ctl->commands[ctl->ncommands];
-		ctl->ncommands++;
-
 		memset(cmd, 0, sizeof(*cmd));
+
+		cmd->idx = ctl->ncommands;
+		cmd->last_mountpoint = -1;
+		ctl->ncommands++;
 
 		name = xstr;
 		end = (char *) skip_alnum(xstr);
@@ -497,6 +628,7 @@ int main(int argc, char *argv[])
 		{ "freq",       required_argument, NULL, 'f' },
 		{ "dir",	required_argument, NULL, 'd' },
 		{ "oper",       required_argument, NULL, 'O' },
+		{ "no-cleanup", optional_argument, NULL, 'N' },
 		{ NULL, 0, NULL, 0 }
 	};
 
@@ -505,7 +637,7 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 	close_stdout_atexit();
 
-	while ((c = getopt_long(argc, argv, "p:x:f:d:O:", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:x:f:d:O:N", longopts, NULL)) != -1) {
 
 		switch(c) {
 		case 'p':
@@ -523,6 +655,9 @@ int main(int argc, char *argv[])
 		case 'O':
 			bomber_add_command(ctl, optarg);
 			break;
+		case 'N':
+			ctl->no_cleanup = 1;
+			break;
 		}
 	}
 
@@ -533,7 +668,7 @@ int main(int argc, char *argv[])
 	if (!ctl->dir)
 		ctl->dir = xstrdup("/mnt/bomber");
 	if (!ctl->nworkers)
-		ctl->nworkers = ctl->nmounts / 10;
+		ctl->nworkers = ctl->nmounts > 10 ? ctl->nmounts / 10 : ctl->nmounts;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
@@ -550,7 +685,9 @@ int main(int argc, char *argv[])
 		mesg_warnx(ctl, _("interrupted by signal"));
 
 	bomber_cleanup_pool(ctl);
-	bomber_cleanup_dir(ctl);
+
+	if (!ctl->no_cleanup)
+		bomber_cleanup_dir(ctl);
 
 	return EXIT_SUCCESS;
 }
