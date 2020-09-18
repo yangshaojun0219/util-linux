@@ -71,7 +71,9 @@ struct bomber_cmd {
 	size_t last_mountpoint;
 
 	char *args;	/* command options specified by user */
-	void *data;	/* private command data */
+
+	uintmax_t	repeat_max_loops;
+	uintmax_t	repeat_max_seconds;
 };
 
 struct bomber_worker {
@@ -374,6 +376,33 @@ static int bomber_cleanup_pool(struct bomber_ctl *ctl)
 	return 0;
 }
 
+static int parse_command_args(struct bomber_ctl *ctl, struct bomber_cmd *cmd)
+{
+	assert(ctl);
+	assert(cmd);
+	assert(cmd->args);
+
+	switch (cmd->id) {
+	case CMD_REPEAT:
+		if (isdigit_string(cmd->args))
+			cmd->repeat_max_loops = strtou64_or_err(cmd->args,
+						_("repeat(): failed to parse arguments"));
+		else if (mnt_optstr_get_uint(cmd->args,
+					"loops", &cmd->repeat_max_loops) == 0)
+			;
+		else if (mnt_optstr_get_uint(cmd->args,
+					"seconds", &cmd->repeat_max_seconds) == 0)
+			;
+		else
+			errx(EXIT_FAILURE, _("repeat(): failed to parse arguments"));
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static inline size_t name2idx(const char *name, const char **ary, size_t arysz, const char *errmsg)
 {
 	size_t i;
@@ -437,6 +466,8 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 
 			if (*xstr == ':')
 				target = xstr + 1;
+
+			parse_command_args(ctl, cmd);
 		}
 
 		if (target) {
