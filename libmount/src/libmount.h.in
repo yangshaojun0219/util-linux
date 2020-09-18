@@ -30,6 +30,7 @@ extern "C" {
 
 #include <stdio.h>
 #include <mntent.h>
+#include <inttypes.h>
 #include <sys/types.h>
 
 /* Make sure libc MS_* definitions are used by default. Note that MS_* flags
@@ -378,6 +379,8 @@ extern int mnt_optstr_set_option(char **optstr, const char *name,
 				const char *value);
 extern int mnt_optstr_remove_option(char **optstr, const char *name);
 extern int mnt_optstr_deduplicate_option(char **optstr, const char *name);
+
+extern int mnt_optstr_get_uint(const char *optstr, const char *name, uintmax_t *res);
 
 extern int mnt_split_optstr(const char *optstr,
 			    char **user, char **vfs, char **fs,

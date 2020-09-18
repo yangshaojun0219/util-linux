@@ -311,6 +311,42 @@ int mnt_optstr_get_option(const char *optstr, const char *name,
 }
 
 /**
+ * mnt_optstr_get_uint:
+ * @optstr: string with a comma separated list of options
+ * @name: requested option name
+ * @value: returns number
+ *
+ * Returns: 0 on success, 1 when not found the @name or negative number in case
+ * of error.
+ */
+int mnt_optstr_get_uint(const char *optstr, const char *name, uintmax_t *res)
+{
+	char *val;
+	size_t valsz;
+	int rc;
+
+	if (!optstr || !name)
+		return -EINVAL;
+
+	*res = 0;
+
+	rc = mnt_optstr_get_option(optstr, name, &val, &valsz);
+
+	if (rc == 0 && val && valsz) {
+		char *end = NULL;
+
+		errno = 0;
+		*res = strtoumax(val, &end, 0);
+
+		if (errno)
+			return -errno;
+		if (val == end || (end && *end != ',' && *end != '\0'))
+			return -EINVAL;
+	}
+	return rc;
+}
+
+/**
  * mnt_optstr_deduplicate_option:
  * @optstr: string with a comma separated list of options
  * @name: requested option name
@@ -1350,6 +1386,28 @@ static int test_get(struct libmnt_test *ts, int argc, char *argv[])
 	return rc;
 }
 
+static int test_get_uint(struct libmnt_test *ts, int argc, char *argv[])
+{
+	char *optstr;
+	const char *name;
+	uintmax_t num;
+	int rc;
+
+	if (argc < 2)
+		return -EINVAL;
+	optstr = argv[1];
+	name = argv[2];
+
+	rc = mnt_optstr_get_uint(optstr, name, &num);
+	if (rc == 0)
+		printf("found; name: %s, argument=%ju\n", name, num);
+	else if (rc == 1)
+		printf("%s: not found\n", name);
+	else
+		printf("parse error: %s\n", optstr);
+	return rc;
+}
+
 static int test_remove(struct libmnt_test *ts, int argc, char *argv[])
 {
 	const char *name;
@@ -1428,6 +1486,7 @@ int main(int argc, char *argv[])
 		{ "--prepend",test_prepend,"<optstr> <name> [<value>]  prepend value to optstr" },
 		{ "--set",    test_set,    "<optstr> <name> [<value>]  (un)set value" },
 		{ "--get",    test_get,    "<optstr> <name>            search name in optstr" },
+		{ "--get-uint", test_get_uint, "<optstr> <name>         search number in optstr" },
 		{ "--remove", test_remove, "<optstr> <name>            remove name in optstr" },
 		{ "--dedup",  test_dedup,  "<optstr> <name>            deduplicate name in optstr" },
 		{ "--split",  test_split,  "<optstr>                   split into FS, VFS and userspace" },
