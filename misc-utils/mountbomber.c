@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <stdarg.h>
 #include <libmount.h>
 #include <ctype.h>
@@ -21,6 +22,7 @@
 #include "closestream.h"
 #include "canonicalize.h"
 #include "fileutils.h"
+#include "monotonic.h"
 
 #define XALLOC_EXIT_CODE MNT_EX_SYSERR
 #include "xalloc.h"
@@ -70,12 +72,12 @@ struct bomber_cmd {
 	size_t idx;
 	size_t target;	/* CMD_TARGET_ */
 
-	int last_mountpoint;
-
 	char *args;	/* command options specified by user */
 
 	uintmax_t	repeat_max_loops;
-	uintmax_t	repeat_max_seconds;
+	time_t		repeat_max_seconds;
+	size_t		repeat_nloops;
+
 };
 
 struct bomber_worker {
@@ -86,7 +88,8 @@ struct bomber_worker {
 	size_t pool_len;	/* number of mounpoints assigned to the worker */
 	char *pool_status;
 
-	struct timeval starttime;
+	struct timeval	starttime;
+	int last_mountpoint;
 };
 
 struct bomber_ctl {
@@ -246,18 +249,6 @@ static void bomber_cleanup_dir(struct bomber_ctl *ctl)
 		mesg_warn(ctl, _("connot remove directory %s"), ctl->dir);
 }
 
-static int last_mountpoint(struct bomber_ctl *ctl, size_t cur)
-{
-	size_t i;
-
-	for (i = cur - 1; i > 0; i--) {
-		if (ctl->commands[i - 1].last_mountpoint != -1)
-			return ctl->commands[i - 1].last_mountpoint;
-	}
-
-	return -1;
-}
-
 static inline int is_mounted(struct bomber_worker *wrk, size_t mnt)
 {
 	return isset(wrk->pool_status, mnt - wrk->pool_off);
@@ -268,14 +259,22 @@ static inline int set_mounted(struct bomber_worker *wrk, size_t mnt)
 	return setbit(wrk->pool_status, mnt - wrk->pool_off);
 }
 
+static inline int set_umounted(struct bomber_worker *wrk, size_t mnt)
+{
+	return clrbit(wrk->pool_status, mnt - wrk->pool_off);
+}
+
 static int do_mount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t mnt)
 {
 	char name[MOUNTPOINT_BUFSZ];
 	int rc = 0;
 
-	if (is_mounted(wrk, mnt))
-		goto done;
+	assert(wrk);
+	assert(cmd);
 
+	if (is_mounted(wrk, mnt)) {
+		goto done;
+	}
 	get_mountpoint_name(mnt, name, sizeof(name));
 	rc = mount("tmpfs", name, "tmpfs", 0, NULL);
 	if (rc)
@@ -284,7 +283,7 @@ static int do_mount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t mn
 		set_mounted(wrk, mnt);
 done:
 	if (rc == 0)
-		cmd->last_mountpoint = mnt;
+		wrk->last_mountpoint = mnt;
 	return rc;
 }
 
@@ -293,22 +292,25 @@ static int do_umount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t m
 	char name[MOUNTPOINT_BUFSZ];
 	int rc = 0;
 
-	if (!is_mounted(wrk, mnt))
-		goto done;
+	assert(wrk);
+	assert(cmd);
 
+	if (!is_mounted(wrk, mnt)) {
+		goto done;
+	}
 	get_mountpoint_name(mnt, name, sizeof(name));
 	rc = umount(name);
 	if (rc)
 		warn("umount failed");
 	else
-		set_mounted(wrk, mnt);
+		set_umounted(wrk, mnt);
 done:
 	if (rc == 0)
-		cmd->last_mountpoint = mnt;
+		wrk->last_mountpoint = mnt;
 	return rc;
 }
 
-static int get_mount_idx(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct bomber_cmd *cmd)
+static int get_mount_idx(struct bomber_worker *wrk, struct bomber_cmd *cmd)
 {
 	int mnt = -1;
 	int lo = wrk->pool_off;
@@ -319,19 +321,19 @@ static int get_mount_idx(struct bomber_ctl *ctl, struct bomber_worker *wrk, stru
 		mnt = (rand() % (up - lo + 1)) + lo;
 		break;
 	case CMD_TARGET_LAST:
-		mnt = last_mountpoint(ctl, cmd->idx);
+		mnt = wrk->last_mountpoint;
 		if (mnt < 0)
 			return 0;
 		break;
 	case CMD_TARGET_NEXT:
-		mnt = last_mountpoint(ctl, cmd->idx) + 1;
+		mnt = wrk->last_mountpoint + 1;
 		if (mnt < 0)
 			return 0;
 		if (mnt > up)
 			mnt = lo;
 		break;
 	case CMD_TARGET_PREV:
-		mnt = last_mountpoint(ctl, cmd->idx) - 1;
+		mnt = wrk->last_mountpoint - 1;
 		if (mnt < 0)
 			return 0;
 		if (mnt < lo)
@@ -348,8 +350,13 @@ static int get_mount_idx(struct bomber_ctl *ctl, struct bomber_worker *wrk, stru
 static int cmd_mount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct bomber_cmd *cmd)
 {
 	int rc = 0;
-	int mnt = get_mount_idx(ctl, wrk, cmd);
+	int mnt;
 
+	assert(ctl);
+	assert(wrk);
+	assert(cmd);
+
+	mnt = get_mount_idx(wrk, cmd);
 	if (mnt >= 0)
 		rc = do_mount(wrk, cmd, mnt);
 
@@ -368,8 +375,13 @@ static int cmd_mount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct b
 static int cmd_umount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct bomber_cmd *cmd)
 {
 	int rc = 0;
-	int mnt = get_mount_idx(ctl, wrk, cmd);
+	int mnt;
 
+	assert(ctl);
+	assert(wrk);
+	assert(cmd);
+
+	mnt = get_mount_idx(wrk, cmd);
 	if (mnt >= 0)
 		rc = do_umount(wrk, cmd, mnt);
 
@@ -385,10 +397,35 @@ static int cmd_umount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct 
 	return rc;
 }
 
+static int cmd_repeat(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t *idx)
+{
+	if (cmd->repeat_max_seconds) {
+		struct timeval rest, now;
+
+		gettime_monotonic(&now);
+		timersub(&now, &wrk->starttime, &rest);
+
+		if (rest.tv_sec < cmd->repeat_max_seconds)
+			goto repeat;
+	} else if (cmd->repeat_max_loops) {
+
+		if (cmd->repeat_nloops < cmd->repeat_max_loops) {
+			cmd->repeat_nloops++;
+			goto repeat;
+		}
+		cmd->repeat_nloops = 0;
+	}
+
+	return 0;
+repeat:
+	*idx = 0;
+	return 0;
+}
+
 static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 {
 	pid_t pid;
-	size_t i;
+	size_t i = 0;
 	int rc = 0;
 
 	switch ((pid = fork())) {
@@ -401,12 +438,19 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 		return pid;
 	}
 
+	gettime_monotonic(&wrk->starttime);
+
 	/* init */
 	wrk->pool_status = xcalloc(wrk->pool_len / NBBY + 1, sizeof(char));
 
 	/* child main loop */
-	for (i = 0; sig_die == 0 && i < ctl->ncommands; i++) {
-		struct bomber_cmd *cmd = &ctl->commands[i];
+	while (sig_die == 0) {
+		struct bomber_cmd *cmd;
+
+		if (i >= ctl->ncommands)
+			break;
+
+		cmd = &ctl->commands[i++];
 
 		switch (cmd->id) {
 		case CMD_MOUNT:
@@ -420,6 +464,7 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 		case CMD_DELAY:
 			break;
 		case CMD_REPEAT:
+			rc = cmd_repeat(wrk, cmd, &i);
 			break;
 		default:
 			rc = -EINVAL;
@@ -525,23 +570,28 @@ static int bomber_cleanup_pool(struct bomber_ctl *ctl)
 
 static int parse_command_args(struct bomber_ctl *ctl, struct bomber_cmd *cmd)
 {
+	uintmax_t x;
+
 	assert(ctl);
 	assert(cmd);
 	assert(cmd->args);
 
 	switch (cmd->id) {
 	case CMD_REPEAT:
-		if (isdigit_string(cmd->args))
+		if (isdigit_string(cmd->args)) {
 			cmd->repeat_max_loops = strtou64_or_err(cmd->args,
 						_("repeat(): failed to parse arguments"));
-		else if (mnt_optstr_get_uint(cmd->args,
-					"loops", &cmd->repeat_max_loops) == 0)
-			;
-		else if (mnt_optstr_get_uint(cmd->args,
-					"seconds", &cmd->repeat_max_seconds) == 0)
-			;
-		else
-			errx(EXIT_FAILURE, _("repeat(): failed to parse arguments"));
+			break;
+		}
+		if (mnt_optstr_get_uint(cmd->args, "loops", &cmd->repeat_max_loops) == 0)
+			break;
+
+		if (mnt_optstr_get_uint(cmd->args, "seconds", &x) == 0) {
+			cmd->repeat_max_seconds = (time_t) x;
+			if ((uintmax_t) cmd->repeat_max_seconds == x)
+				break;
+		}
+		errx(EXIT_FAILURE, _("repeat(): failed to parse arguments"));
 		break;
 	default:
 		break;
@@ -579,7 +629,6 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 		memset(cmd, 0, sizeof(*cmd));
 
 		cmd->idx = ctl->ncommands;
-		cmd->last_mountpoint = -1;
 		ctl->ncommands++;
 
 		name = xstr;
@@ -615,6 +664,8 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 
 			if (*xstr == ':')
 				target = xstr + 1;
+			else if (*xstr == ',')
+				xstr++;
 
 			parse_command_args(ctl, cmd);
 		}
