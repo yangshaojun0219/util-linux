@@ -35,6 +35,7 @@
 
 enum {
 	CMD_DELAY,
+	CMD_LABEL,
 	CMD_MOUNT,
 	CMD_REMOUNT,
 	CMD_REPEAT,
@@ -43,6 +44,7 @@ enum {
 
 static const char *cmdnames[] = {
 	[CMD_DELAY] = "delay",
+	[CMD_LABEL] = "label",
 	[CMD_MOUNT] = "mount",
 	[CMD_REMOUNT] = "remount",
 	[CMD_REPEAT] = "repeat",
@@ -56,6 +58,8 @@ enum {
 	CMD_TARGET_NEXT,
 	CMD_TARGET_PREV,
 	CMD_TARGET_RAND,
+
+	CMD_TARGET_NONE,
 };
 
 static const char *targetnames[] = {
@@ -65,6 +69,8 @@ static const char *targetnames[] = {
 	[CMD_TARGET_NEXT] = "next",
 	[CMD_TARGET_PREV] = "prev",
 	[CMD_TARGET_RAND] = "rand",
+
+	[CMD_TARGET_NONE] = "none",
 };
 
 struct bomber_cmd {
@@ -77,6 +83,7 @@ struct bomber_cmd {
 	uintmax_t	repeat_max_loops;
 	time_t		repeat_max_seconds;
 	size_t		repeat_nloops;
+	char		*repeat_label;
 	suseconds_t	delay_usec;
 };
 
@@ -417,8 +424,11 @@ static int cmd_umount(struct bomber_ctl *ctl, struct bomber_worker *wrk, struct 
 	return rc;
 }
 
-static int cmd_repeat(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t *idx)
+static int cmd_repeat(struct bomber_ctl *ctl, struct bomber_worker *wrk,
+		      struct bomber_cmd *cmd, size_t *idx)
 {
+	size_t idx0 = *idx;
+
 	if (cmd->repeat_max_seconds) {
 		struct timeval rest, now;
 
@@ -438,8 +448,21 @@ static int cmd_repeat(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t 
 
 	return 0;
 repeat:
-	mesg_verbose("  REPEATING commands %u --> %zu", 0U, *idx);
-	*idx = 0;
+	if (cmd->repeat_label) {
+		size_t i;
+
+		for (i = *idx; i > 0; i--) {
+			struct bomber_cmd *xc = &ctl->commands[i - 1];
+			if (xc->id == CMD_LABEL &&
+			    xc->args && strcmp(xc->args, cmd->repeat_label) == 0) {
+				*idx = i - 1;
+				break;
+			}
+		}
+	} else
+		*idx = 0;
+
+	mesg_verbose("  repeating %zu --> %zu", *idx, idx0);
 	return 0;
 }
 
@@ -473,14 +496,19 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 	/* child main loop */
 	while (sig_die == 0) {
 		struct bomber_cmd *cmd;
+		size_t idx = i;
 
 		if (i >= ctl->ncommands)
 			break;
 
-		cmd = &ctl->commands[i++];
-		mesg_verbose("COMMAND[%zu] %s:%s", i - 1,
+		cmd = &ctl->commands[idx];
+
+		if (cmd->target != CMD_TARGET_NONE)
+			mesg_verbose("COMMAND[%zu] %s:%s", idx,
 				cmdnames[cmd->id],
 				targetnames[cmd->target]);
+		else
+			mesg_verbose("COMMAND[%zu] %s", idx, cmdnames[cmd->id]);
 
 		switch (cmd->id) {
 		case CMD_MOUNT:
@@ -495,7 +523,9 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 			rc = cmd_delay(cmd);
 			break;
 		case CMD_REPEAT:
-			rc = cmd_repeat(wrk, cmd, &i);
+			rc = cmd_repeat(ctl, wrk, cmd, &idx);
+			break;
+		case CMD_LABEL:
 			break;
 		default:
 			rc = -EINVAL;
@@ -503,6 +533,11 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 		}
 		if (rc)
 			break;
+
+		if (idx == i)
+			i++;
+		else
+			i = idx; /* modified by function (e.g. CMD_REPEAT) */
 	}
 
 	if (rc)
@@ -576,9 +611,10 @@ static int bomber_wait_pool(struct bomber_ctl *ctl, int flags)
 		}
 		if (WIFEXITED(status) || WIFSIGNALED(status))
 			unlink_child(ctl, pid, status);
+
+		mesg_bar(ctl, _("active workers ... %04zu (waiting)"), ctl->nactive);
 	}
 
-	mesg_bar(ctl, _("active workers ... %04zu"), ctl->nactive);
 	mesg_bar_done(ctl);
 
 	return 1;	/* no more childs */
@@ -602,6 +638,8 @@ static int bomber_cleanup_pool(struct bomber_ctl *ctl)
 static int parse_command_args(struct bomber_ctl *ctl, struct bomber_cmd *cmd)
 {
 	uintmax_t x;
+	char *opt;
+	size_t optsz;
 
 	assert(ctl);
 	assert(cmd);
@@ -609,20 +647,20 @@ static int parse_command_args(struct bomber_ctl *ctl, struct bomber_cmd *cmd)
 
 	switch (cmd->id) {
 	case CMD_REPEAT:
+		/* unnamed argument */
 		if (isdigit_string(cmd->args)) {
 			cmd->repeat_max_loops = strtou64_or_err(cmd->args,
 						_("repeat(): failed to parse arguments"));
 			break;
 		}
-		if (mnt_optstr_get_uint(cmd->args, "loops", &cmd->repeat_max_loops) == 0)
-			break;
-
-		if (mnt_optstr_get_uint(cmd->args, "seconds", &x) == 0) {
-			cmd->repeat_max_seconds = (time_t) x;
-			if ((uintmax_t) cmd->repeat_max_seconds == x)
-				break;
+		/* named arguments */
+		if (mnt_optstr_get_uint(cmd->args, "loops", &cmd->repeat_max_loops) == 0) {
+			;
 		}
-		errx(EXIT_FAILURE, _("repeat(): failed to parse arguments"));
+		if (mnt_optstr_get_uint(cmd->args, "seconds", &x) == 0)
+			cmd->repeat_max_seconds = (time_t) x;
+		if (mnt_optstr_get_option(cmd->args, "label", &opt, &optsz) == 0 && optsz)
+			cmd->repeat_label = xstrndup(opt, optsz);
 		break;
 	case CMD_DELAY:
 		if (isdigit_string(cmd->args)) {
@@ -671,6 +709,11 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 		ctl->ncommands++;
 
 		name = xstr;
+		if (*xstr == '@')
+			xstr++;
+		else if (startswith(name, "->"))
+			xstr += 2;
+
 		end = (char *) skip_alnum(xstr);
 
 		/* name terminator */
@@ -691,14 +734,23 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 
 		xstr = *end ? end + 1 : end;
 		*end = '\0';
-		cmd->id = name2idx(name, cmdnames, ARRAY_SIZE(cmdnames),
+
+		if (*name == '@') {
+			cmd->id = CMD_LABEL;
+			cmd->args = xstrdup(name + 1);
+		} else if (startswith(name, "->")) {
+			cmd->id = CMD_REPEAT;
+			cmd->repeat_label = xstrdup(name + 2);
+		} else
+			cmd->id = name2idx(name, cmdnames, ARRAY_SIZE(cmdnames),
 					_("unknown command name '%s'"));
 		if (args) {
 			end = strchr(args, ')');
 			if (!end)
 				errx(EXIT_FAILURE, _("missing terminating ')' in '%s'"), args);
 			*end = '\0';
-			cmd->args = xstrdup(args);
+			if (!cmd->args)
+				cmd->args = xstrdup(args);
 			xstr = end + 1;
 
 			if (*xstr == ':')
@@ -716,6 +768,12 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 			cmd->target = name2idx(target, targetnames,
 						ARRAY_SIZE(targetnames),
 						_("unknown command target '%s'"));
+		} else switch (cmd->id) {
+			case CMD_REPEAT:
+			case CMD_LABEL:
+			case CMD_DELAY:
+				cmd->target = CMD_TARGET_NONE;
+				break;
 		}
 	}
 
@@ -726,7 +784,8 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 		for (i = 0; i < ctl->ncommands; i++) {
 			struct bomber_cmd *cmd = &ctl->commands[i];
 
-			mesg_verbose("  %10s : target=%-7s args=\"%s\"",
+			mesg_verbose("[%zu]  %10s : target=%-7s args=\"%s\"",
+					i,
 					cmdnames[cmd->id],
 					targetnames[cmd->target],
 					cmd->args ? : "");
