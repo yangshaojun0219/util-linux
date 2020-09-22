@@ -112,6 +112,7 @@ struct bomber_ctl {
 };
 
 static volatile sig_atomic_t sig_die;
+static int verbose;
 
 static void sig_handler_die(int dummy __attribute__((__unused__)))
 {
@@ -164,6 +165,20 @@ mesg_warnx(struct bomber_ctl *ctl, const char *fmt, ...)
 	va_start(ap, fmt);
 	vwarnx(fmt, ap);
 	va_end(ap);
+}
+
+static void __attribute__ ((__format__ (__printf__, 1, 2)))
+mesg_verbose(const char *fmt, ...)
+{
+	va_list ap;
+
+	if (!verbose)
+		return;
+
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fputc('\n', stderr);
 }
 
 static inline char *get_mountpoint_name(size_t i, char *buf, size_t bufsz)
@@ -273,6 +288,7 @@ static int do_mount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t mn
 	assert(cmd);
 
 	if (is_mounted(wrk, mnt)) {
+		mesg_verbose("  ignore target %ju (mounted)", mnt);
 		goto done;
 	}
 	get_mountpoint_name(mnt, name, sizeof(name));
@@ -296,6 +312,7 @@ static int do_umount(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t m
 	assert(cmd);
 
 	if (!is_mounted(wrk, mnt)) {
+		mesg_verbose("  ignore target %ju (not mounted)", mnt);
 		goto done;
 	}
 	get_mountpoint_name(mnt, name, sizeof(name));
@@ -323,27 +340,30 @@ static int get_mount_idx(struct bomber_worker *wrk, struct bomber_cmd *cmd)
 	case CMD_TARGET_LAST:
 		mnt = wrk->last_mountpoint;
 		if (mnt < 0)
-			return 0;
+			mnt = 0;
 		break;
 	case CMD_TARGET_NEXT:
 		mnt = wrk->last_mountpoint + 1;
 		if (mnt < 0)
-			return 0;
+			mnt = 0;
 		if (mnt > up)
 			mnt = lo;
 		break;
 	case CMD_TARGET_PREV:
 		mnt = wrk->last_mountpoint - 1;
 		if (mnt < 0)
-			return 0;
+			mnt = 0;
 		if (mnt < lo)
 			mnt = up;
 		break;
-	default:
-		mnt = -1;
+
+	case CMD_TARGET_ALL:
+		mesg_verbose("  target: all");
 		break;
 	}
 
+	if (mnt >= 0)
+		mesg_verbose("  target: %d", mnt);
 	return mnt;
 }
 
@@ -418,6 +438,7 @@ static int cmd_repeat(struct bomber_worker *wrk, struct bomber_cmd *cmd, size_t 
 
 	return 0;
 repeat:
+	mesg_verbose("  REPEATING commands %u --> %zu", 0U, *idx);
 	*idx = 0;
 	return 0;
 }
@@ -451,6 +472,9 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 			break;
 
 		cmd = &ctl->commands[i++];
+		mesg_verbose("COMMAND[%zu] %s:%s", i - 1,
+				cmdnames[cmd->id],
+				targetnames[cmd->target]);
 
 		switch (cmd->id) {
 		case CMD_MOUNT:
@@ -680,6 +704,21 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 		}
 	}
 
+	if (verbose) {
+		size_t i;
+
+		mesg_verbose("parsed commands:");
+		for (i = 0; i < ctl->ncommands; i++) {
+			struct bomber_cmd *cmd = &ctl->commands[i];
+
+			mesg_verbose("  %10s : target=%-7s args=\"%s\"",
+					cmdnames[cmd->id],
+					targetnames[cmd->target],
+					cmd->args ? : "");
+		}
+	}
+
+
 	free(cmdstr);
 	return 0;
 }
@@ -697,7 +736,8 @@ int main(int argc, char *argv[])
 		{ "freq",       required_argument, NULL, 'f' },
 		{ "dir",	required_argument, NULL, 'd' },
 		{ "oper",       required_argument, NULL, 'O' },
-		{ "no-cleanup", optional_argument, NULL, 'N' },
+		{ "no-cleanup", no_argument,       NULL, 'N' },
+		{ "verbose",    no_argument,       NULL, 'V' },
 		{ NULL, 0, NULL, 0 }
 	};
 
@@ -706,7 +746,7 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 	close_stdout_atexit();
 
-	while ((c = getopt_long(argc, argv, "p:x:f:d:O:N", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:x:f:d:O:NV", longopts, NULL)) != -1) {
 
 		switch(c) {
 		case 'p':
@@ -726,6 +766,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'N':
 			ctl->no_cleanup = 1;
+			break;
+		case 'V':
+			verbose = 1;
 			break;
 		}
 	}
