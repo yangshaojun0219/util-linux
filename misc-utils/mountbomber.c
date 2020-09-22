@@ -34,11 +34,11 @@
 #define MOUNTPOINT_BUFSZ	sizeof(stringify_value(SIZE_MAX))
 
 enum {
-	CMD_MOUNT,
-	CMD_UMOUNT,
-	CMD_REMOUNT,
 	CMD_DELAY,
-	CMD_REPEAT
+	CMD_MOUNT,
+	CMD_REMOUNT,
+	CMD_REPEAT,
+	CMD_UMOUNT,
 };
 
 static const char *cmdnames[] = {
@@ -77,7 +77,7 @@ struct bomber_cmd {
 	uintmax_t	repeat_max_loops;
 	time_t		repeat_max_seconds;
 	size_t		repeat_nloops;
-
+	suseconds_t	delay_usec;
 };
 
 struct bomber_worker {
@@ -443,6 +443,12 @@ repeat:
 	return 0;
 }
 
+static int cmd_delay(struct bomber_cmd *cmd)
+{
+	xusleep(cmd->delay_usec);
+	return 0;
+}
+
 static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 {
 	pid_t pid;
@@ -486,6 +492,7 @@ static pid_t start_worker(struct bomber_ctl *ctl, struct bomber_worker *wrk)
 		case CMD_REMOUNT:
 			break;
 		case CMD_DELAY:
+			rc = cmd_delay(cmd);
 			break;
 		case CMD_REPEAT:
 			rc = cmd_repeat(wrk, cmd, &i);
@@ -616,6 +623,14 @@ static int parse_command_args(struct bomber_ctl *ctl, struct bomber_cmd *cmd)
 				break;
 		}
 		errx(EXIT_FAILURE, _("repeat(): failed to parse arguments"));
+		break;
+	case CMD_DELAY:
+		if (isdigit_string(cmd->args)) {
+			cmd->delay_usec = strtou64_or_err(cmd->args,
+					_("delay(): failed to parse arguments"));
+			break;
+		}
+		errx(EXIT_FAILURE, _("delay(): failed to parse arguments"));
 		break;
 	default:
 		break;
