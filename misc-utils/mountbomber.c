@@ -805,7 +805,7 @@ static void __attribute__((__noreturn__)) usage(void)
 
 	fputs(USAGE_OPTIONS, out);
 	fputs(_(" -p, --pool <num>       number of the mountpoints (default: 100)\n"), out);
-	fputs(_(" -x, --parallel <num>   number of the parallel processes (default: <pool>/10)\n"), out);
+	fputs(_(" -x, --parallel <num>   number of the parallel processes (default: 10 or 1)\n"), out);
 	fputs(_(" -d, --dir <path>       directory for mountpoints (default: /mnt/bomber)\n"), out);
 	fputs(_(" -O, --oper <list>      requested mount operations\n"), out);
 	fputs(_(" -N, --no-cleanup       don't remove mountpoints\n"), out);
@@ -917,7 +917,7 @@ int main(int argc, char *argv[])
 	if (!ctl->dir)
 		ctl->dir = xstrdup("/mnt/bomber");
 	if (!ctl->nworkers)
-		ctl->nworkers = ctl->nmounts > 10 ? ctl->nmounts / 10 : ctl->nmounts;
+		ctl->nworkers = ctl->nmounts > 10 ? 10 : 1;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
