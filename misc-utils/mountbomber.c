@@ -102,8 +102,6 @@ struct bomber_worker {
 struct bomber_ctl {
 	size_t	nmounts;	/* --pool <size> */
 
-	unsigned int freq;	/* number of operations per second */
-
 	const char *dir;	/* --dir <dir> */
 
 	struct bomber_cmd *commands;
@@ -260,8 +258,6 @@ static void bomber_cleanup_dir(struct bomber_ctl *ctl)
 				errno = 0;
 				rmdir(name);
 			}
-			if (errno != ENOENT)
-				mesg_warn(ctl, _("connot remove directory %s"), name);
 		}
 	}
 
@@ -797,6 +793,68 @@ static int bomber_add_command(struct bomber_ctl *ctl, const char *str)
 	return 0;
 }
 
+static void __attribute__((__noreturn__)) usage(void)
+{
+	FILE *out = stdout;
+
+	fputs(USAGE_HEADER, out);
+	fprintf(out, _(" %s [options]\n"), program_invocation_short_name);
+
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Generate large number of mount operations.\n"), out);
+
+	fputs(USAGE_OPTIONS, out);
+	fputs(_(" -p, --pool <num>       number of the mountpoints (default: 100)\n"), out);
+	fputs(_(" -x, --parallel <num>   number of the parallel processes (default: <pool>/10)\n"), out);
+	fputs(_(" -d, --dir <path>       directory for mountpoints (default: /mnt/bomber)\n"), out);
+	fputs(_(" -O, --oper <list>      requested mount operations\n"), out);
+	fputs(_(" -N, --no-cleanup       don't remove mountpoints\n"), out);
+	fputs(_(" -V, --verbose          verbose output\n"), out);
+	printf(USAGE_HELP_OPTIONS(24));
+
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Operation syntax (--oper):\n"), out);
+	fputs(_("  command[(arg, ...)[:target]], ...\n"), out);
+	fputs(_("  @name specifies label and ->name repeats all from label \n"), out);
+	fputs(_("   * ->name loop may be restricted by <num>, loops=<num> or seconds=<num>\n"), out);
+	fputs(_("   * for example repeat 100 times command foo: @A,foo,->A(100)\n"), out);
+	fputs(_("   * or repeat command foo for 3600 seconds: @A,foo,->A(seconds=3600)\n"), out);
+
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Operation commands:\n"), out);
+	fputs(_("   mount          call mount(2) syscall\n"), out);
+	fputs(_("   umount         call umount(2) syscall\n"), out);
+	fputs(_("   delay(<num>)   wait for <num> microseconds\n"), out);
+
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Operation targets:\n"), out);
+	fputs(_("   all            all mountpoints in the pool\n"), out);
+	fputs(_("   rand           random mountpoint from pool\n"), out);
+	fputs(_("   last           previously used mountpoint\n"), out);
+	fputs(_("   next           <last>+1\n"), out);
+	fputs(_("   prev           <last>-1\n"), out);
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Examples:\n"), out);
+	fputs(_("  mountbomber --pool 200 --oper \"mount:all,@A,umount:rand,mount:last,->A(1000),umount:all\"\n"), out);
+	fputs(_("   * mount 200 mountpoints\n"), out);
+	fputs(_("   * 1000 times call umount and mount on random mountpoint\n"), out);
+	fputs(_("   * after that umount all\n"), out);
+	fputs(_("  mountbomber --verbose --parallel 1 --oper \"mount:all,@A,umount:rand,mount:last,delay(500000),->A(10),umount:all\"\n"), out);
+	fputs(_("   * user and system friendly way to develop your testing scenario\n"), out);
+
+	fputs(USAGE_SEPARATOR, out);
+	fputs(_("Notes:\n"), out);
+	fputs(_("  The pool is split by number of paraller processes and the process uses\n"
+		"  only a subset of the pool. For example \"--paralell 10 --pool 1000\"\n"
+	        "  means 100 mountpoints for the each process.\n"), out);
+
+
+
+	fputs(USAGE_SEPARATOR, out);
+	exit(EXIT_SUCCESS);
+}
+
+
 int main(int argc, char *argv[])
 {
 	struct bomber_ctl _ctl = {
@@ -807,11 +865,12 @@ int main(int argc, char *argv[])
 	static const struct option longopts[] = {
 		{ "pool",       required_argument, NULL, 'p' },
 		{ "parallel",   required_argument, NULL, 'x' },
-		{ "freq",       required_argument, NULL, 'f' },
 		{ "dir",	required_argument, NULL, 'd' },
 		{ "oper",       required_argument, NULL, 'O' },
 		{ "no-cleanup", no_argument,       NULL, 'N' },
 		{ "verbose",    no_argument,       NULL, 'V' },
+		{ "version",    no_argument,       NULL, 'v' },
+		{ "help",       no_argument,       NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 
@@ -820,7 +879,7 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 	close_stdout_atexit();
 
-	while ((c = getopt_long(argc, argv, "p:x:f:d:O:NV", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "hp:x:f:d:O:NVv", longopts, NULL)) != -1) {
 
 		switch(c) {
 		case 'p':
@@ -828,9 +887,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'x':
 			ctl->nworkers = strtou32_or_err(optarg, _("failed to parse parallel argument"));
-			break;
-		case 'f':
-			ctl->freq = strtou32_or_err(optarg, _("failed to parse freq argument"));
 			break;
 		case 'd':
 			ctl->dir = xstrdup(optarg);
@@ -844,6 +900,13 @@ int main(int argc, char *argv[])
 		case 'V':
 			verbose = 1;
 			break;
+
+		case 'h':
+			usage();
+		case 'v':
+			print_version(EXIT_SUCCESS);
+		default:
+			errtryhelp(EXIT_FAILURE);
 		}
 	}
 
