@@ -1193,7 +1193,7 @@ AM_CONDITIONAL([BUILD_MOUNT], [test "x$build_mount" = xyes])
 
 AC_ARG_ENABLE([mountbomber],
   AS_HELP_STRING([--enable-mount], [do build mountbomber(8)]),
-  [], [UL_DEFAULT_ENABLE([mountbomber], [no])]
+  [], [UL_DEFAULT_ENABLE([mountbomber], [check])]
 )
 UL_BUILD_INIT([mountbomber])
 UL_REQUIRES_LINUX([mountbomber])
