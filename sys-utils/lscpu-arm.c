@@ -178,6 +178,12 @@ static const struct id_part intel_part[] = {
     { -1, "unknown" },
 };
 
+static const struct id_part phytium_part[] = {
+    { 0x662, "FT-2000+" },
+    { 0x663, "Tengyun-2500" },
+    { -1, "unknown" },
+};
+
 static const struct id_part fujitsu_part[] = {
     { 0x001, "A64FX" },
     { -1, "unknown" },
@@ -212,6 +218,7 @@ static const struct hw_impl hw_implementer[] = {
     { 0x56, marvell_part, "Marvell" },
     { 0x66, faraday_part, "Faraday" },
     { 0x69, intel_part,   "Intel" },
+    { 0x70, phytium_part, "Phytium" },
     { -1,   unknown_part, "unknown" },
 };
 
