@@ -180,7 +180,7 @@ static const struct id_part intel_part[] = {
 
 static const struct id_part phytium_part[] = {
     { 0x662, "FT-2000+" },
-    { 0x663, "Tengyun-2500" },
+    { 0x663, "Tengyun-S2500" },
     { -1, "unknown" },
 };
 
